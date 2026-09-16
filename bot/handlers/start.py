@@ -16,7 +16,8 @@ async def cmd_start(message: Message):
         "🔹 /weekly - Generate a weekly expense report\n"
         "🔹 /expenses - List recent expenses\n"
         "🔹 /members - List active participants\n"
-        "🔹 /summarize - (Admins) Get a fun AI summary of group spending\n\n"
+        "🔹 /summarize - (Admins) Get a minimal total AI summary\n"
+        "🔹 /detail - (Admins) Get a detailed breakdown of who spent what\n\n"
         "📝 **Note**: I only track expenses within Telegram groups. Make sure Group Privacy is OFF in BotFather."
     )
     await message.answer(text)

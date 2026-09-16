@@ -107,9 +107,11 @@ async def cmd_summarize(message: Message):
         "You are an AI assistant for a group chat expense tracker.\n"
         "Here is the recent expense history for this group:\n\n"
         + "\n".join(expense_data) +
-        "\n\nPlease write a fun, concise natural language summary of their spending. "
-        "Highlight who the big spenders are, what the main expenses were, and any funny or interesting patterns you notice. "
-        "Keep it under 3 paragraphs."
+        "\n\nPlease calculate the total amount spent by each person and output ONLY a clean, minimal list like this:\n"
+        "Expenses:\n"
+        "Name1: 45000 UZS total\n"
+        "Name2: 54000 UZS total\n"
+        "Do not include any extra chat, greetings, or funny text. Just the list."
     )
     
     try:
@@ -122,4 +124,42 @@ async def cmd_summarize(message: Message):
         await message.answer(f"🤖 **AI Summary:**\n\n{response.text}")
     except Exception as e:
         await message.answer("Sorry, I encountered an error generating the summary.")
+
+@router.message(Command("detail"))
+async def cmd_detail(message: Message):
+    if message.chat.type == "private":
+        return await message.answer("This bot is designed to work inside Telegram groups.")
+        
+    if not await is_admin(message):
+        return await message.answer("Only group administrators can ask for an AI detailed report.")
+        
+    from bot.services.expense_service import get_expenses
+    from config import GEMINI_API_KEY
+    
+    expenses = await get_expenses(message.chat.id, limit=200)
+    if not expenses:
+        return await message.answer("There are no expenses to report yet.")
+        
+    expense_data = []
+    for exp in expenses:
+        expense_data.append(f"{exp.payer_name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
+        
+    prompt = (
+        "You are an AI assistant for a group chat expense tracker.\n"
+        "Here is the recent expense history for this group:\n\n"
+        + "\n".join(expense_data) +
+        "\n\nPlease output a clean, detailed list grouped by each individual. For each person, list the date, amount, currency, and what they spent it on.\n"
+        "Format it cleanly without any extra greetings or AI chat."
+    )
+    
+    try:
+        from google import genai
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt,
+        )
+        await message.answer(f"🤖 **Detailed Report:**\n\n{response.text}")
+    except Exception as e:
+        await message.answer("Sorry, I encountered an error generating the detailed report.")
 
