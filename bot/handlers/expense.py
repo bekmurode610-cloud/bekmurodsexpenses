@@ -49,9 +49,15 @@ async def process_natural_language_expense(message: Message):
         
         data = json.loads(response.text)
         
-        if data.get("is_expense") and data.get("amount", 0) > 0 and data.get("currency"):
-            amount = float(data["amount"])
-            currency = data["currency"].upper()
+        is_expense = data.get("is_expense", False)
+        try:
+            amount = float(data.get("amount", 0))
+        except (ValueError, TypeError):
+            amount = 0.0
+            
+        currency = data.get("currency", "").upper()
+        
+        if is_expense and amount > 0 and currency:
             description = data.get("description", "Expense")
             
             # Store expense
@@ -66,7 +72,8 @@ async def process_natural_language_expense(message: Message):
             
             # React with thumbs up to confirm it was saved silently!
             try:
-                await message.react([{"type": "emoji", "emoji": "👍"}])
+                from aiogram.types import ReactionTypeEmoji
+                await message.react([ReactionTypeEmoji(emoji="👍")])
             except Exception as e:
                 # Fallback if bot doesn't have reaction permissions
                 formatted_amount = f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
