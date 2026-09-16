@@ -172,8 +172,14 @@ async def cmd_detail(message: Message):
             model='gemini-3.6-flash',
             contents=prompt,
         )
+        
+        # Check if the response was blocked by safety filters
+        if not response.candidates or not response.candidates[0].content.parts:
+            return await message.answer(f"Sorry, the AI blocked the response due to safety filters. Finish Reason: {response.candidates[0].finish_reason if response.candidates else 'Unknown'}")
+            
         await message.answer(f"Detailed Report:\n\n{response.text}")
 
     except Exception as e:
-        await message.answer("Sorry, I encountered an error generating the detailed report.")
-
+        import logging
+        logging.error(f"Error in /detail: {e}", exc_info=True)
+        await message.answer(f"Sorry, I encountered an error generating the detailed report: {str(e)}")
