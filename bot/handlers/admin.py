@@ -92,16 +92,20 @@ async def cmd_summarize(message: Message):
     if not await is_admin(message):
         return await message.answer("Only group administrators can ask for an AI summary.")
         
-    from bot.services.expense_service import get_expenses
+    from bot.services.expense_service import get_expenses, get_members
     from config import GEMINI_API_KEY
     
     expenses = await get_expenses(message.chat.id, limit=200)
     if not expenses:
         return await message.answer("There are no expenses to summarize yet.")
         
+    members = await get_members(message.chat.id)
+    member_names = {m.telegram_id: m.name for m in members}
+        
     expense_data = []
     for exp in expenses:
-        expense_data.append(f"{exp.payer_name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
+        name = member_names.get(exp.payer_id, exp.payer_name)
+        expense_data.append(f"{name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
         
     prompt = (
         "You are an AI assistant for a group chat expense tracker.\n"
@@ -134,16 +138,20 @@ async def cmd_detail(message: Message):
     if not await is_admin(message):
         return await message.answer("Only group administrators can ask for an AI detailed report.")
         
-    from bot.services.expense_service import get_expenses
+    from bot.services.expense_service import get_expenses, get_members
     from config import GEMINI_API_KEY
     
     expenses = await get_expenses(message.chat.id, limit=200)
     if not expenses:
         return await message.answer("There are no expenses to report yet.")
         
+    members = await get_members(message.chat.id)
+    member_names = {m.telegram_id: m.name for m in members}
+        
     expense_data = []
     for exp in expenses:
-        expense_data.append(f"{exp.payer_name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
+        name = member_names.get(exp.payer_id, exp.payer_name)
+        expense_data.append(f"{name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
         
     prompt = (
         "You are an AI assistant for a group chat expense tracker.\n"

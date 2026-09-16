@@ -21,7 +21,9 @@ async def ensure_member(telegram_id: int, group_id: int, name: str):
         if not member:
             new_member = Member(telegram_id=telegram_id, group_id=group_id, name=name)
             session.add(new_member)
-            await session.commit()
+        else:
+            member.name = name
+        await session.commit()
 
 async def get_members(group_id: int):
     async with async_session() as session:

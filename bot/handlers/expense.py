@@ -68,11 +68,14 @@ async def process_natural_language_expense(message: Message):
         if is_expense and amount > 0 and currency:
             description = data.get("description", "Expense")
             
+            # Use username if available, otherwise full name
+            display_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+            
             # Store expense
             await add_expense(
                 group_id=message.chat.id,
                 payer_id=message.from_user.id,
-                payer_name=message.from_user.full_name,
+                payer_name=display_name,
                 amount=amount,
                 currency=currency,
                 description=description
