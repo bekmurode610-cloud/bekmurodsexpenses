@@ -37,9 +37,17 @@ async def process_natural_language_expense(message: Message):
         client = genai.Client(api_key=GEMINI_API_KEY)
         
         # Call Gemini to parse the message
+        prompt = (
+            f"Extract expense information from this chat message: '{message.text}'\n"
+            "CRITICAL INSTRUCTION FOR UZBEK NUMBERS: 'ming' means thousand. "
+            "If the user says '88 ming', the amount is 88000. "
+            "HOWEVER, if the number already has thousands (like '88000 ming'), DO NOT multiply it by 1000 again! "
+            "Assume they just meant 88000. So '88000 ming' = 88000. '88 ming' = 88000."
+        )
+        
         response = client.models.generate_content(
             model='gemini-3.6-flash',
-            contents=f"Extract expense information from this chat message: '{message.text}'",
+            contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ExpenseExtraction,
