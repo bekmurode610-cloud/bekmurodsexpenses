@@ -111,7 +111,7 @@ async def cmd_summarize(message: Message):
         "Expenses:\n"
         "Name1: 45000 UZS total\n"
         "Name2: 54000 UZS total\n"
-        "Do not include any extra chat, greetings, or funny text. Just the list."
+        "CRITICAL RULE: DO NOT use ANY markdown characters (no asterisks, no hashes, no bolding, no italics, no emojis). Use pure plain text only."
     )
     
     try:
@@ -121,7 +121,7 @@ async def cmd_summarize(message: Message):
             model='gemini-3.6-flash',
             contents=prompt,
         )
-        await message.answer(f"🤖 **AI Summary:**\n\n{response.text}")
+        await message.answer(f"Expenses Summary:\n\n{response.text}")
     except Exception as e:
         await message.answer("Sorry, I encountered an error generating the summary.")
 
@@ -149,7 +149,7 @@ async def cmd_detail(message: Message):
         "Here is the recent expense history for this group:\n\n"
         + "\n".join(expense_data) +
         "\n\nPlease output a clean, detailed list grouped by each individual. For each person, list the date, amount, currency, and what they spent it on.\n"
-        "Format it cleanly without any extra greetings or AI chat."
+        "CRITICAL RULE: DO NOT use ANY markdown characters (no *, no #, no bold, no italics, no emojis). Use pure plain text only. Do not use bullets or dashes. Just plain clean text."
     )
     
     try:
@@ -159,7 +159,8 @@ async def cmd_detail(message: Message):
             model='gemini-3.6-flash',
             contents=prompt,
         )
-        await message.answer(f"🤖 **Detailed Report:**\n\n{response.text}")
+        await message.answer(f"Detailed Report:\n\n{response.text}")
+
     except Exception as e:
         await message.answer("Sorry, I encountered an error generating the detailed report.")
 
