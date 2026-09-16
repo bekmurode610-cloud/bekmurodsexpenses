@@ -3,3 +3,4 @@ SQLAlchemy>=2.0.0
 aiosqlite
 python-dotenv
 asyncpg
+google-genai

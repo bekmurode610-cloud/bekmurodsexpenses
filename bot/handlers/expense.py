@@ -1,71 +1,76 @@
 from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
-from bot.states.expense import ExpenseState
+from aiogram.types import Message
 from bot.services.expense_service import add_expense
-from bot.keyboards.inline import get_cancel_keyboard
+from config import GEMINI_API_KEY
+import logging
+
+# We will conditionally import and use gemini
+try:
+    from google import genai
+    from google.genai import types
+    from pydantic import BaseModel, Field
+    import json
+    HAS_GEMINI = True
+except ImportError:
+    HAS_GEMINI = False
 
 router = Router()
+logger = logging.getLogger(__name__)
 
-@router.message(Command("expense"))
-async def cmd_expense(message: Message, state: FSMContext):
+class ExpenseExtraction(BaseModel):
+    is_expense: bool = Field(description="True if the user is explicitly stating they paid for something for the group.")
+    amount: float = Field(description="The numeric amount paid. 0 if not an expense.", default=0)
+    currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
+    description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def process_natural_language_expense(message: Message):
+    # Ignore private chats
     if message.chat.type == "private":
-        await message.answer("This bot is designed to work inside Telegram groups.")
         return
 
-    await state.set_state(ExpenseState.waiting_for_amount)
-    await message.answer(
-        "How much did you pay?",
-        reply_markup=get_cancel_keyboard()
-    )
+    # If Gemini is not configured, do nothing
+    if not HAS_GEMINI or not GEMINI_API_KEY:
+        return
 
-@router.message(ExpenseState.waiting_for_amount)
-async def process_amount(message: Message, state: FSMContext):
     try:
-        # replace comma with dot for floats
-        amount_str = message.text.replace(",", ".")
-        amount = float(amount_str)
-        if amount <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Please enter a valid positive amount.")
-        return
-
-    await state.update_data(amount=amount)
-    await state.set_state(ExpenseState.waiting_for_currency)
-    await message.answer("Currency? (e.g., UZS, USD, EUR)", reply_markup=get_cancel_keyboard())
-
-@router.message(ExpenseState.waiting_for_currency)
-async def process_currency(message: Message, state: FSMContext):
-    currency = message.text.strip().upper()
-    if len(currency) > 5 or not currency.isalpha():
-        await message.answer("Please enter a valid currency code (e.g., UZS, USD).")
-        return
-
-    await state.update_data(currency=currency)
-    await state.set_state(ExpenseState.waiting_for_description)
-    await message.answer("What was it for?", reply_markup=get_cancel_keyboard())
-
-@router.message(ExpenseState.waiting_for_description)
-async def process_description(message: Message, state: FSMContext):
-    description = message.text.strip()
-    data = await state.get_data()
-    
-    amount = data['amount']
-    currency = data['currency']
-    
-    # Store expense
-    expense = await add_expense(
-        group_id=message.chat.id,
-        payer_id=message.from_user.id,
-        payer_name=message.from_user.full_name,
-        amount=amount,
-        currency=currency,
-        description=description
-    )
-    
-    await state.clear()
-    
-    formatted_amount = f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
-    await message.answer(f"✅ Recorded: {formatted_amount} {currency} — {description}")
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # Call Gemini to parse the message
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=f"Extract expense information from this chat message: '{message.text}'",
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ExpenseExtraction,
+                temperature=0.0
+            ),
+        )
+        
+        data = json.loads(response.text)
+        
+        if data.get("is_expense") and data.get("amount", 0) > 0 and data.get("currency"):
+            amount = float(data["amount"])
+            currency = data["currency"].upper()
+            description = data.get("description", "Expense")
+            
+            # Store expense
+            await add_expense(
+                group_id=message.chat.id,
+                payer_id=message.from_user.id,
+                payer_name=message.from_user.full_name,
+                amount=amount,
+                currency=currency,
+                description=description
+            )
+            
+            # React with thumbs up to confirm it was saved silently!
+            try:
+                await message.react([{"type": "emoji", "emoji": "👍"}])
+            except Exception as e:
+                # Fallback if bot doesn't have reaction permissions
+                formatted_amount = f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
+                await message.reply(f"✅ Recorded: {formatted_amount} {currency} — {description}")
+                
+    except Exception as e:
+        logger.error(f"Error parsing message with Gemini: {e}")

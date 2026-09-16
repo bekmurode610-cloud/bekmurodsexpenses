@@ -9,14 +9,14 @@ router = Router()
 async def cmd_start(message: Message):
     text = (
         "👋 Welcome to the Group Expense Tracker Bot!\n\n"
-        "I help track shared expenses in groups. Simply add me to a group, and start using the following commands:\n\n"
-        "🔹 /expense - Record a new expense\n"
+        "I track shared expenses passively using AI. Just chat normally! (e.g. 'I bought pizza for 50000 UZS').\n"
+        "I will react with 👍 when I record an expense.\n\n"
         "🔹 /balance - Show current balances and who owes whom\n"
         "🔹 /report - Generate a complete expense report\n"
         "🔹 /weekly - Generate a weekly expense report\n"
         "🔹 /expenses - List recent expenses\n"
         "🔹 /members - List active participants\n\n"
-        "📝 **Note**: I only track expenses within Telegram groups. Private chat usage is limited."
+        "📝 **Note**: I only track expenses within Telegram groups. Make sure Group Privacy is OFF in BotFather."
     )
     await message.answer(text)
 

@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is missing! Please set it in .env")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Default database URL
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///expense_bot.db")
