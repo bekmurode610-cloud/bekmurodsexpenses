@@ -83,3 +83,43 @@ async def process_reset(callback: CallbackQuery):
     await reset_group(callback.message.chat.id)
     await callback.message.edit_text("✅ All expense records for this group have been deleted.")
     await callback.answer()
+
+@router.message(Command("summarize"))
+async def cmd_summarize(message: Message):
+    if message.chat.type == "private":
+        return await message.answer("This bot is designed to work inside Telegram groups.")
+        
+    if not await is_admin(message):
+        return await message.answer("Only group administrators can ask for an AI summary.")
+        
+    from bot.services.expense_service import get_expenses
+    from config import GEMINI_API_KEY
+    
+    expenses = await get_expenses(message.chat.id, limit=200)
+    if not expenses:
+        return await message.answer("There are no expenses to summarize yet.")
+        
+    expense_data = []
+    for exp in expenses:
+        expense_data.append(f"{exp.payer_name} paid {exp.amount} {exp.currency} for {exp.description} on {exp.created_at.strftime('%Y-%m-%d')}")
+        
+    prompt = (
+        "You are an AI assistant for a group chat expense tracker.\n"
+        "Here is the recent expense history for this group:\n\n"
+        + "\n".join(expense_data) +
+        "\n\nPlease write a fun, concise natural language summary of their spending. "
+        "Highlight who the big spenders are, what the main expenses were, and any funny or interesting patterns you notice. "
+        "Keep it under 3 paragraphs."
+    )
+    
+    try:
+        from google import genai
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        await message.answer(f"🤖 **AI Summary:**\n\n{response.text}")
+    except Exception as e:
+        await message.answer("Sorry, I encountered an error generating the summary.")
+
