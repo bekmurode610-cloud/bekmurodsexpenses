@@ -38,7 +38,7 @@ async def process_natural_language_expense(message: Message):
         
         # Call Gemini to parse the message
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=f"Extract expense information from this chat message: '{message.text}'",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
