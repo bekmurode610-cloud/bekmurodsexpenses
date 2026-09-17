@@ -45,10 +45,14 @@ async def process_natural_language_expense(message: Message):
         # Call Gemini to parse the message
         prompt = (
             f"Extract expense information from this chat message: '{message.text}'\n"
-            "CRITICAL INSTRUCTION FOR UZBEK NUMBERS: 'ming' means thousand. "
-            "If the user says '88 ming', the amount is 88000. "
-            "HOWEVER, if the number already has thousands (like '88000 ming'), DO NOT multiply it by 1000 again! "
-            "Assume they just meant 88000. So '88000 ming' = 88000. '88 ming' = 88000."
+            "CRITICAL NUMBER INSTRUCTION: The group uses 'ming' (thousands) as their base unit. "
+            "You MUST extract the numeric amount strictly in 'ming' units without any trailing zeros. "
+            "For example:\n"
+            "- '10 ming' -> amount: 10\n"
+            "- '10000' or '10000 ming' -> amount: 10\n"
+            "- '88 ming' or '88000' -> amount: 88\n"
+            "- '14 ming' -> amount: 14\n"
+            "DO NOT output large numbers like 10000. Always drop the 3 zeros."
         )
         
         response = client.models.generate_content(
