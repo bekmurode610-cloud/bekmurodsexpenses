@@ -31,10 +31,6 @@ async def process_natural_language_expense(message: Message):
     if message.chat.type == "private":
         return
 
-    # ONLY ALlow the creator (admin) of the group to trigger the bot
-    if not await is_creator(message, message.bot):
-        return
-
     # FAST PRE-FILTER: If the message doesn't contain a single number, it's almost certainly not an expense.
     # This prevents the bot from burning through Gemini API rate limits on normal chat conversations!
     import re
