@@ -134,7 +134,7 @@ async def cmd_summarize(message: Message):
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
             await message.answer("Wait 10 seconds.")
         else:
-            await message.answer("Error, try again.")
+            await message.answer(f"API Error: {error_msg}")
 
 @router.message(Command("detail"))
 async def cmd_detail(message: Message):
@@ -197,4 +197,4 @@ async def cmd_detail(message: Message):
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
             await message.answer("Wait 10 seconds.")
         else:
-            await message.answer("Error, try again.")
+            await message.answer(f"API Error: {error_msg}")

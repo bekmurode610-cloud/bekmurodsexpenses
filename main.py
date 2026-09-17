@@ -33,21 +33,6 @@ async def main():
     # Initialize Database
     await init_db()
 
-    # EMERGENCY FIX: Divide all excessively large amounts in the database
-    from bot.database.database import async_session
-    from bot.database.models import Expense
-    from sqlalchemy import select
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(Expense))
-            for exp in result.scalars().all():
-                while exp.amount >= 1000:
-                    exp.amount = exp.amount / 1000
-            await session.commit()
-            logger.info("Database numbers sanitized.")
-    except Exception as e:
-        logger.error(f"Failed to sanitize DB: {e}")
-
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
