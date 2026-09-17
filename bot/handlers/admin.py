@@ -115,7 +115,7 @@ async def cmd_summarize(message: Message):
         "Name1: 45 ming total\n"
         "Name2: 54 ming total\n"
         "CRITICAL RULE: DO NOT use ANY markdown characters (no asterisks, no hashes, no bolding, no italics, no emojis). Use pure plain text only.\n"
-        "NUMBER FORMATTING RULE: Always format large amounts in 'ming' (which means thousands) without decimals. For example, if the amount is 88000, write '88 ming'. If the amount is 14000, write '14 ming'."
+        "NUMBER FORMATTING RULE: Always format large amounts in 'ming'. Strip all trailing zeros. For example, if the amount is 88000000 or 88000, write EXACTLY '88 ming' (never '88000 ming'). If it is 14000, write '14 ming'."
     )
     
     try:
@@ -157,10 +157,10 @@ async def cmd_detail(message: Message):
         + "\n".join(expense_data) +
         "\n\nPlease output a clean, detailed list grouped by each individual. For each person, list the date, amount, and what they spent it on.\n"
         "CRITICAL RULE: DO NOT use ANY markdown characters (no *, no #, no bold, no italics, no emojis). Use pure plain text only. Do not use bullets or dashes. Just plain clean text.\n"
-        "NUMBER FORMATTING RULE: Always format large amounts in 'ming' (which means thousands) and do not include currency symbols or decimals. For example:\n"
-        "- If the amount is 88000, write it as '88 ming'.\n"
-        "- If the amount is 14000, write it as '14 ming'.\n"
-        "- If the amount is 45000, write it as '45 ming'."
+        "NUMBER FORMATTING RULE: Always format large amounts in 'ming'. You MUST aggressively strip ALL trailing zeros so it reads like human slang. For example:\n"
+        "- If the database amount is 88000000 or 88000, output exactly '88 ming'. NEVER output '88000 ming'.\n"
+        "- If the amount is 14000, output '14 ming'.\n"
+        "- If the amount is 45000, output '45 ming'."
     )
     
     try:
