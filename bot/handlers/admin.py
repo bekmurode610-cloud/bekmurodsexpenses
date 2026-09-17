@@ -33,7 +33,7 @@ async def cmd_delete(message: Message):
         return await message.answer("Expense not found in this group.")
         
     if expense.payer_id != message.from_user.id and not await is_admin(message):
-        return await message.answer("You can only delete your own expenses, unless you are an admin.")
+        return
         
     await message.answer(
         f"Are you sure you want to delete this expense?\n"
@@ -64,7 +64,7 @@ async def cmd_reset(message: Message):
         return await message.answer("This bot is designed to work inside Telegram groups.")
         
     if not await is_admin(message):
-        return await message.answer("Only group administrators can reset the group data.")
+        return
         
     await message.answer(
         "⚠️ This will permanently delete all expense records for this group.",
@@ -89,7 +89,7 @@ async def cmd_summarize(message: Message):
         return await message.answer("This bot is designed to work inside Telegram groups.")
         
     if not await is_admin(message):
-        return await message.answer("Only group administrators can ask for an AI summary.")
+        return
         
     from bot.services.expense_service import get_expenses, get_live_member_names
     from config import GEMINI_API_KEY
@@ -143,7 +143,7 @@ async def cmd_detail(message: Message):
         return await message.answer("This bot is designed to work inside Telegram groups.")
         
     if not await is_admin(message):
-        return await message.answer("Only group administrators can ask for an AI detailed report.")
+        return
         
     from bot.services.expense_service import get_expenses, get_live_member_names
     from config import GEMINI_API_KEY
