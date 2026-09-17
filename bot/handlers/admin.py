@@ -51,7 +51,7 @@ async def process_delete(callback: CallbackQuery):
         
     # Check permissions again
     if expense.payer_id != callback.from_user.id:
-        if not await is_creator(callback.message, callback.bot, callback.from_user.id):
+        if not await is_creator(callback.message, callback.bot, callback.from_user.id, callback.from_user.username):
             return await callback.answer("You are not authorized to delete this.", show_alert=True)
             
     await delete_expense(expense_id)
@@ -76,7 +76,7 @@ async def process_reset(callback: CallbackQuery):
     if callback.message.chat.type == "private":
         return
         
-    if not await is_creator(callback.message, callback.bot, callback.from_user.id):
+    if not await is_creator(callback.message, callback.bot, callback.from_user.id, callback.from_user.username):
         return await callback.answer("You are not authorized to reset the group.", show_alert=True)
         
     await reset_group(callback.message.chat.id)
