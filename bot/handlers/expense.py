@@ -18,7 +18,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 class ExpenseExtraction(BaseModel):
-    is_expense: bool = Field(description="True if the user is explicitly stating they paid for something for the group.")
+    is_expense: bool = Field(description="True if the message implies an expense. Even short phrases like '140 ming go'stga' or '10 ming for taxi' should be considered True.")
     amount: float = Field(description="The numeric amount paid. 0 if not an expense.", default=0)
     currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
     description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
