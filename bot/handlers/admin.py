@@ -6,9 +6,10 @@ from bot.keyboards.inline import get_delete_expense_keyboard, get_reset_group_ke
 
 router = Router()
 
+from bot.utils.auth import is_creator
+
 async def is_admin(message: Message) -> bool:
-    chat_member = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
-    return chat_member.status in ["administrator", "creator"]
+    return await is_creator(message, message.bot)
 
 @router.message(Command("delete"))
 async def cmd_delete(message: Message):
@@ -50,8 +51,7 @@ async def process_delete(callback: CallbackQuery):
         
     # Check permissions again
     if expense.payer_id != callback.from_user.id:
-        chat_member = await callback.bot.get_chat_member(callback.message.chat.id, callback.from_user.id)
-        if chat_member.status not in ["administrator", "creator"]:
+        if not await is_creator(callback.message, callback.bot, callback.from_user.id):
             return await callback.answer("You are not authorized to delete this.", show_alert=True)
             
     await delete_expense(expense_id)
@@ -76,8 +76,7 @@ async def process_reset(callback: CallbackQuery):
     if callback.message.chat.type == "private":
         return
         
-    chat_member = await callback.bot.get_chat_member(callback.message.chat.id, callback.from_user.id)
-    if chat_member.status not in ["administrator", "creator"]:
+    if not await is_creator(callback.message, callback.bot, callback.from_user.id):
         return await callback.answer("You are not authorized to reset the group.", show_alert=True)
         
     await reset_group(callback.message.chat.id)

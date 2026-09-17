@@ -6,6 +6,7 @@ from bot.services.settlement_service import calculate_settlements
 from bot.services.expense_service import get_expenses, get_members, get_live_member_names
 from bot.keyboards.inline import get_delete_expense_keyboard
 from datetime import datetime, timedelta
+from bot.utils.auth import is_creator
 
 router = Router()
 
@@ -17,6 +18,9 @@ def format_money(amount: float) -> str:
 async def cmd_balance(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
+
+    if not await is_creator(message, message.bot):
+        return
 
     group_id = message.chat.id
     balances_by_currency = await calculate_balances(group_id)
@@ -56,6 +60,9 @@ async def cmd_balance(message: Message):
 async def cmd_report(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
+
+    if not await is_creator(message, message.bot):
+        return
 
     group_id = message.chat.id
     members = await get_members(group_id)
@@ -119,6 +126,9 @@ async def cmd_report(message: Message):
 async def cmd_weekly(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
+
+    if not await is_creator(message, message.bot):
+        return
 
     group_id = message.chat.id
     
@@ -187,6 +197,9 @@ async def cmd_weekly(message: Message):
 async def cmd_expenses(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
+
+    if not await is_creator(message, message.bot):
+        return
 
     group_id = message.chat.id
     expenses = await get_expenses(group_id, limit=20)
