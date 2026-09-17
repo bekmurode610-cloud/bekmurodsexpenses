@@ -52,11 +52,11 @@ async def process_natural_language_expense(message: Message):
             "- '10000' or '10000 ming' -> amount: 10\n"
             "- '88 ming' or '88000' -> amount: 88\n"
             "- '14 ming' -> amount: 14\n"
-            "DO NOT output large numbers like 10000. Always drop the 3 zeros."
+            "YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING TRAILING ZEROS LIKE 10000 or 140000. Always output the base number (e.g. 10 or 140)."
         )
         
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

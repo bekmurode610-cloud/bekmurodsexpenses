@@ -122,7 +122,7 @@ async def cmd_summarize(message: Message):
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
         )
         await message.answer(f"Expenses Summary:\n\n{response.text}")
@@ -181,7 +181,7 @@ async def cmd_detail(message: Message):
         from google import genai
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-3.5-flash',
             contents=prompt,
         )
         
