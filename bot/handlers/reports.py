@@ -11,7 +11,7 @@ router = Router()
 
 def format_money(amount: float) -> str:
     amount = round(amount, 1)
-    return f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.1f}"
+    return f"{amount:,.0f} ming" if amount.is_integer() else f"{amount:,.1f} ming"
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message):
@@ -35,17 +35,17 @@ async def cmd_balance(message: Message):
             name = member_names.get(member_id, "Unknown")
             sign = "+" if balance > 0 else ""
             if abs(balance) > 0.01:
-                text += f"{name}: {sign}{format_money(balance)} {currency}\n"
+                text += f"{name}: {sign}{format_money(balance)}\n"
             else:
-                text += f"{name}: 0 {currency}\n"
+                text += f"{name}: 0 ming\n"
         
-        text += f"\n{currency} Settlements\n"
+        text += f"\nSettlements\n"
         settlements = calculate_settlements(balances)
         if settlements:
             for debtor_id, creditor_id, amount in settlements:
                 debtor_name = member_names.get(debtor_id, "Unknown")
                 creditor_name = member_names.get(creditor_id, "Unknown")
-                text += f"{debtor_name} owes {creditor_name}: {format_money(amount)} {currency}\n"
+                text += f"{debtor_name} owes {creditor_name}: {format_money(amount)}\n"
         else:
             text += "All settled up!\n"
         text += "\n"
@@ -84,15 +84,15 @@ async def cmd_report(message: Message):
             member_spending[exp.payer_id] += exp.amount
             
         text += f"Currency: {currency}\n"
-        text += f"Total spent: {format_money(total_spent)} {currency}\n"
+        text += f"Total spent: {format_money(total_spent)}\n"
         text += f"Number of expenses: {len(cur_expenses)}\n\n"
         
         for member_id, spent in sorted(member_spending.items(), key=lambda x: x[1], reverse=True):
             name = member_names.get(member_id, "Unknown")
             if spent > 0:
-                text += f"{name} paid: {format_money(spent)} {currency}\n"
+                text += f"{name} paid: {format_money(spent)}\n"
             
-        text += f"\nFair share per person: {format_money(fair_share)} {currency}\n\n"
+        text += f"\nFair share per person: {format_money(fair_share)}\n\n"
         
     balances_by_currency = await calculate_balances(group_id)
     text += "Balances & Settlements:\n\n"
@@ -200,7 +200,7 @@ async def cmd_expenses(message: Message):
     for idx, exp in enumerate(expenses, 1):
         formatted_amount = format_money(exp.amount)
         name = member_names.get(exp.payer_id, exp.payer_name)
-        text += f"{idx}. {name}: {formatted_amount} {exp.currency} for {exp.description} (ID: {exp.id})\n"
+        text += f"{idx}. {name}: {formatted_amount} for {exp.description} (ID: {exp.id})\n"
         
     text += "\nTo delete an expense, use /delete <ID>"
     await message.answer(text)
