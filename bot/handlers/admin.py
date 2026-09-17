@@ -92,16 +92,15 @@ async def cmd_summarize(message: Message):
     if not await is_admin(message):
         return await message.answer("Only group administrators can ask for an AI summary.")
         
-    from bot.services.expense_service import get_expenses, get_members
+    from bot.services.expense_service import get_expenses, get_live_member_names
     from config import GEMINI_API_KEY
     
     expenses = await get_expenses(message.chat.id, limit=200)
     if not expenses:
         return await message.answer("There are no expenses to summarize yet.")
         
-    members = await get_members(message.chat.id)
-    member_names = {m.telegram_id: m.name for m in members}
-        
+    member_names = await get_live_member_names(message.bot, message.chat.id)
+            
     expense_data = []
     for exp in expenses:
         name = member_names.get(exp.payer_id, exp.payer_name)
@@ -138,16 +137,15 @@ async def cmd_detail(message: Message):
     if not await is_admin(message):
         return await message.answer("Only group administrators can ask for an AI detailed report.")
         
-    from bot.services.expense_service import get_expenses, get_members
+    from bot.services.expense_service import get_expenses, get_live_member_names
     from config import GEMINI_API_KEY
     
     expenses = await get_expenses(message.chat.id, limit=200)
     if not expenses:
         return await message.answer("There are no expenses to report yet.")
         
-    members = await get_members(message.chat.id)
-    member_names = {m.telegram_id: m.name for m in members}
-        
+    member_names = await get_live_member_names(message.bot, message.chat.id)
+            
     expense_data = []
     for exp in expenses:
         name = member_names.get(exp.payer_id, exp.payer_name)

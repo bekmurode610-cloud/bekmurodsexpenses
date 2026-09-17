@@ -30,6 +30,28 @@ async def get_members(group_id: int):
         result = await session.execute(select(Member).filter(Member.group_id == group_id))
         return result.scalars().all()
 
+async def get_live_member_names(bot, group_id: int):
+    members = await get_members(group_id)
+    member_names = {}
+    for m in members:
+        try:
+            chat_member = await bot.get_chat_member(group_id, m.telegram_id)
+            user = chat_member.user
+            name = f"@{user.username}" if user.username else user.full_name
+            member_names[m.telegram_id] = name
+            
+            # Sync back to DB if different
+            if m.name != name:
+                async with async_session() as session:
+                    db_member = await session.execute(select(Member).filter(Member.telegram_id == m.telegram_id, Member.group_id == group_id))
+                    db_member = db_member.scalars().first()
+                    if db_member:
+                        db_member.name = name
+                        await session.commit()
+        except Exception:
+            member_names[m.telegram_id] = m.name # Fallback to DB
+    return member_names
+
 async def add_expense(group_id: int, payer_id: int, payer_name: str, amount: float, currency: str, description: str):
     await ensure_member(payer_id, group_id, payer_name)
     async with async_session() as session:

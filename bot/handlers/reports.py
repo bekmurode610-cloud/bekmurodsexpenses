@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from bot.services.balance_service import calculate_balances, calculate_weekly_balances
 from bot.services.settlement_service import calculate_settlements
-from bot.services.expense_service import get_expenses, get_members
+from bot.services.expense_service import get_expenses, get_members, get_live_member_names
 from bot.keyboards.inline import get_delete_expense_keyboard
 from datetime import datetime, timedelta
 
@@ -15,8 +15,7 @@ def format_money(amount: float) -> str:
 @router.message(Command("balance"))
 async def cmd_balance(message: Message):
     if message.chat.type == "private":
-        await message.answer("This bot is designed to work inside Telegram groups.")
-        return
+        return await message.answer("This bot is designed to work inside Telegram groups.")
 
     group_id = message.chat.id
     balances_by_currency = await calculate_balances(group_id)
@@ -25,8 +24,7 @@ async def cmd_balance(message: Message):
         await message.answer("There are no expenses recorded for this group yet.")
         return
 
-    members = await get_members(group_id)
-    member_names = {m.telegram_id: m.name for m in members}
+    member_names = await get_live_member_names(message.bot, group_id)
 
     text = "Current Balance\n\n"
     
@@ -65,7 +63,7 @@ async def cmd_report(message: Message):
     if not expenses:
         return await message.answer("There are no expenses recorded for this group yet.")
 
-    member_names = {m.telegram_id: m.name for m in members}
+    member_names = await get_live_member_names(message.bot, group_id)
     num_members = len(members)
 
     expenses_by_currency = {}
@@ -135,7 +133,7 @@ async def cmd_weekly(message: Message):
         return await message.answer("There are no expenses recorded for this week yet.")
 
     members = await get_members(group_id)
-    member_names = {m.telegram_id: m.name for m in members}
+    member_names = await get_live_member_names(message.bot, group_id)
 
     text = f"Weekly Report\n{monday_start.strftime('%B %d')} to {sunday_end.strftime('%B %d')}\n\n"
     
@@ -195,10 +193,13 @@ async def cmd_expenses(message: Message):
     if not expenses:
         return await message.answer("There are no expenses recorded for this group yet.")
 
+    member_names = await get_live_member_names(message.bot, group_id)
+
     text = "Recent Expenses\n\n"
     for idx, exp in enumerate(expenses, 1):
         formatted_amount = format_money(exp.amount)
-        text += f"{idx}. {exp.payer_name}: {formatted_amount} {exp.currency} for {exp.description} (ID: {exp.id})\n"
+        name = member_names.get(exp.payer_id, exp.payer_name)
+        text += f"{idx}. {name}: {formatted_amount} {exp.currency} for {exp.description} (ID: {exp.id})\n"
         
     text += "\nTo delete an expense, use /delete <ID>"
     await message.answer(text)
