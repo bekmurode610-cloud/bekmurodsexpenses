@@ -36,7 +36,8 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    # Include routers
+    from bot.handlers import admin_panel
+    dp.include_router(admin_panel.router)
     dp.include_router(start.router)
     dp.include_router(expense.router)
     dp.include_router(reports.router)

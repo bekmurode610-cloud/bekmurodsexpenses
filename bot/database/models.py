@@ -28,3 +28,11 @@ class Expense(Base):
     currency = Column(String, nullable=False)
     description = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class UserRole(Base):
+    __tablename__ = 'user_roles'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
+    username = Column(String, nullable=True)
+    role = Column(String, nullable=False, default='normal') # 'superadmin', 'admin', 'banned', 'normal'
+    added_at = Column(DateTime, default=datetime.utcnow)

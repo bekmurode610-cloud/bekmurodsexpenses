@@ -23,12 +23,16 @@ class ExpenseExtraction(BaseModel):
     currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
     description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
 
-from bot.utils.auth import is_creator
+from bot.utils.auth import is_creator, is_allowed
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def process_natural_language_expense(message: Message):
     # Ignore private chats
     if message.chat.type == "private":
+        return
+
+    # Check if user is banned
+    if not await is_allowed(message):
         return
 
     # FAST PRE-FILTER: If the message doesn't contain a single number, it's almost certainly not an expense.
