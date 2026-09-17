@@ -101,4 +101,11 @@ async def process_natural_language_expense(message: Message):
                 await message.reply(f"✅ Recorded: {formatted_amount} {currency} — {description}")
                 
     except Exception as e:
-        logger.error(f"Error parsing message with Gemini: {e}")
+        logger.error(f"Error processing message with Gemini: {e}")
+        error_msg = str(e)
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            await message.answer("Wait 10 seconds.")
+        elif "503" in error_msg or "UNAVAILABLE" in error_msg:
+            await message.answer("Servers busy, wait.")
+        else:
+            await message.answer(f"API Error: {error_msg}")
