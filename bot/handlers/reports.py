@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 router = Router()
 
 def format_money(amount: float) -> str:
-    return f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
+    amount = round(amount, 1)
+    return f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.1f}"
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message):
