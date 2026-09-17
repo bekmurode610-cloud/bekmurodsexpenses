@@ -132,9 +132,9 @@ async def cmd_summarize(message: Message):
         logging.error(f"Error in /summarize: {error_msg}")
         
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            await message.answer("?⏳ Whoa, slow down! The AI is receiving too many requests at once. Please wait 10 seconds and try again.")
+            await message.answer("Wait 10 seconds.")
         else:
-            await message.answer("Sorry, I encountered an error generating the summary. Please try again later.")
+            await message.answer("Error, try again.")
 
 @router.message(Command("detail"))
 async def cmd_detail(message: Message):
@@ -195,6 +195,6 @@ async def cmd_detail(message: Message):
         logging.error(f"Error in /detail: {error_msg}")
         
         if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            await message.answer("?⏳ Whoa, slow down! The AI is receiving too many requests at once. Please wait 10 seconds and try again.")
+            await message.answer("Wait 10 seconds.")
         else:
-            await message.answer("Sorry, I encountered an error generating the detailed report. Please try again later.")
+            await message.answer("Error, try again.")
