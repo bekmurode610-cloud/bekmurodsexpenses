@@ -29,6 +29,12 @@ async def process_natural_language_expense(message: Message):
     if message.chat.type == "private":
         return
 
+    # FAST PRE-FILTER: If the message doesn't contain a single number, it's almost certainly not an expense.
+    # This prevents the bot from burning through Gemini API rate limits on normal chat conversations!
+    import re
+    if not re.search(r'\d', message.text):
+        return
+
     # If Gemini is not configured, do nothing
     if not HAS_GEMINI or not GEMINI_API_KEY:
         return

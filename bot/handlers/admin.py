@@ -127,7 +127,14 @@ async def cmd_summarize(message: Message):
         )
         await message.answer(f"Expenses Summary:\n\n{response.text}")
     except Exception as e:
-        await message.answer("Sorry, I encountered an error generating the summary.")
+        import logging
+        error_msg = str(e)
+        logging.error(f"Error in /summarize: {error_msg}")
+        
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            await message.answer("?⏳ Whoa, slow down! The AI is receiving too many requests at once. Please wait 10 seconds and try again.")
+        else:
+            await message.answer("Sorry, I encountered an error generating the summary. Please try again later.")
 
 @router.message(Command("detail"))
 async def cmd_detail(message: Message):
@@ -184,5 +191,10 @@ async def cmd_detail(message: Message):
 
     except Exception as e:
         import logging
-        logging.error(f"Error in /detail: {e}", exc_info=True)
-        await message.answer(f"Sorry, I encountered an error generating the detailed report: {str(e)}")
+        error_msg = str(e)
+        logging.error(f"Error in /detail: {error_msg}")
+        
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            await message.answer("?⏳ Whoa, slow down! The AI is receiving too many requests at once. Please wait 10 seconds and try again.")
+        else:
+            await message.answer("Sorry, I encountered an error generating the detailed report. Please try again later.")
