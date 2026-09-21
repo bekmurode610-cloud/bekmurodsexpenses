@@ -248,8 +248,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         // Function to only show points at the end of the line
         const customPointRadius = (ctx) => ctx.dataIndex === ctx.dataset.data.length - 1 ? 6 : 0;
         const customHoverRadius = (ctx) => ctx.dataIndex === ctx.dataset.data.length - 1 ? 8 : 4;
-        const customPointStyle = (ctx) => {{
-            const ds = ctx.dataset;
+        const applyCustomStyle = (ds) => {{
             ds.pointBackgroundColor = ds.borderColor;
             ds.pointBorderColor = 'rgba(255, 255, 255, 0.8)';
             ds.pointBorderWidth = 2;
@@ -267,7 +266,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             pointRadius: customPointRadius,
             pointHoverRadius: customHoverRadius
         }}];
-        wgData.forEach(customPointStyle);
+        wgData.forEach(applyCustomStyle);
 
         new Chart(document.getElementById('weeklyGroupChart'), {{
             type: 'line',
@@ -283,7 +282,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         weeklyMemberDatasets.forEach(ds => {{
             ds.pointRadius = customPointRadius;
             ds.pointHoverRadius = customHoverRadius;
-            customPointStyle({{dataset: ds}});
+            applyCustomStyle(ds);
         }});
 
         new Chart(document.getElementById('weeklyMemberChart'), {{
@@ -305,7 +304,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             pointRadius: customPointRadius,
             pointHoverRadius: customHoverRadius
         }}];
-        mgData.forEach(customPointStyle);
+        mgData.forEach(applyCustomStyle);
 
         new Chart(document.getElementById('monthlyGroupChart'), {{
             type: 'line',
@@ -321,7 +320,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         monthlyMemberDatasets.forEach(ds => {{
             ds.pointRadius = customPointRadius;
             ds.pointHoverRadius = customHoverRadius;
-            customPointStyle({{dataset: ds}});
+            applyCustomStyle(ds);
         }});
 
         new Chart(document.getElementById('monthlyMemberChart'), {{
