@@ -15,6 +15,23 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
     week_keys = sorted(list(weekly_group.keys()))
     month_keys = sorted(list(monthly_group.keys()))
     
+    # Pad to ensure lines are drawn if there is only 1 data point
+    if len(week_keys) == 1:
+        parts = week_keys[0].split('-W')
+        if len(parts) == 2:
+            yr, wk = int(parts[0]), int(parts[1])
+            prev_week = f"{yr}-W{wk-1:02d}" if wk > 1 else f"{yr-1}-W52"
+            week_keys.insert(0, prev_week)
+            weekly_group[prev_week] = 0
+
+    if len(month_keys) == 1:
+        parts = month_keys[0].split('-')
+        if len(parts) == 2:
+            yr, mo = int(parts[0]), int(parts[1])
+            prev_month = f"{yr}-{mo-1:02d}" if mo > 1 else f"{yr-1}-12"
+            month_keys.insert(0, prev_month)
+            monthly_group[prev_month] = 0
+    
     # Prepare data for Chart.js
     # 1. Weekly Group Trend
     weekly_group_chart_data = [weekly_group[k] for k in week_keys]
