@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.utils.auth import is_creator
 from bot.services.auth_service import set_user_role, get_all_users_by_role
+from bot.services.stats_service import get_bot_statistics
 
 router = Router()
 
@@ -11,7 +12,8 @@ user_states = {} # user_id -> state string ('waiting_admin', 'waiting_ban')
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='👥 Add Admin', callback_data='panel_add_admin'), InlineKeyboardButton(text='➖ Remove Admin', callback_data='panel_rm_admin')],
-        [InlineKeyboardButton(text='🚫 Ban User', callback_data='panel_add_ban'), InlineKeyboardButton(text='✅ Unban User', callback_data='panel_rm_ban')]
+        [InlineKeyboardButton(text='🚫 Ban User', callback_data='panel_add_ban'), InlineKeyboardButton(text='✅ Unban User', callback_data='panel_rm_ban')],
+        [InlineKeyboardButton(text='📊 View Statistics & Groups', callback_data='panel_view_stats')]
     ])
 
 @router.message(Command('admin'))
@@ -27,6 +29,27 @@ async def process_panel_cb(callback: CallbackQuery):
     if not await is_creator(callback.message, callback.bot, callback.from_user.id, callback.from_user.username):
         return await callback.answer('Not authorized.', show_alert=True)
     action = callback.data.split('_')[1:]
+    
+    if action == ['view', 'stats']:
+        stats = await get_bot_statistics()
+        text = (
+            f'📊 *Bot Statistics*\n\n'
+            f'📈 *Usage Flow:*\n'
+            f'👥 Total Tracked Members: {stats["members_count"]}\n'
+            f'💬 Total Expenses Processed: {stats["expenses_count"]}\n'
+            f'🏢 Total Groups Joined: {stats["groups_count"]}\n\n'
+            f'🏢 *Recent Groups:*\n'
+        )
+        if stats['recent_groups']:
+            for g in stats['recent_groups']:
+                name = g.group_name or f'Group {g.id}'
+                text += f'• {name}\n'
+        else:
+            text += 'No groups yet.\n'
+            
+        await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=get_admin_keyboard())
+        return await callback.answer()
+        
     if action == ['add', 'admin']:
         user_states[callback.from_user.id] = 'waiting_admin'
         await callback.message.edit_text('Please forward a message from the user you want to make an Admin, or send their Telegram ID.')
