@@ -39,8 +39,8 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             'label': member,
             'data': w_data,
             'borderColor': member_colors[member],
-            'fill': False,
-            'tension': 0.1
+            'backgroundColor': member_colors[member],
+            'borderWidth': 1
         })
         
         m_data = []
@@ -50,8 +50,8 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             'label': member,
             'data': m_data,
             'borderColor': member_colors[member],
-            'fill': False,
-            'tension': 0.1
+            'backgroundColor': member_colors[member],
+            'borderWidth': 1
         })
         
     html = f"""<!DOCTYPE html>
@@ -155,16 +155,15 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         
         // Weekly Group
         new Chart(document.getElementById('weeklyGroupChart'), {{
-            type: 'line',
+            type: 'bar',
             data: {{
                 labels: weekKeys,
                 datasets: [{{
                     label: 'Total Expenses (' + currency + ')',
                     data: {json.dumps(weekly_group_chart_data)},
+                    backgroundColor: 'rgba(45, 156, 219, 0.5)',
                     borderColor: '#2D9CDB',
-                    backgroundColor: 'rgba(45, 156, 219, 0.2)',
-                    fill: true,
-                    tension: 0.1
+                    borderWidth: 1
                 }}]
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
@@ -172,7 +171,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         
         // Weekly Members
         new Chart(document.getElementById('weeklyMemberChart'), {{
-            type: 'line',
+            type: 'bar',
             data: {{
                 labels: weekKeys,
                 datasets: {json.dumps(weekly_member_datasets)}
@@ -182,16 +181,15 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         
         // Monthly Group
         new Chart(document.getElementById('monthlyGroupChart'), {{
-            type: 'line',
+            type: 'bar',
             data: {{
                 labels: monthKeys,
                 datasets: [{{
                     label: 'Total Expenses (' + currency + ')',
                     data: {json.dumps(monthly_group_chart_data)},
+                    backgroundColor: 'rgba(155, 81, 224, 0.5)',
                     borderColor: '#9B51E0',
-                    backgroundColor: 'rgba(155, 81, 224, 0.2)',
-                    fill: true,
-                    tension: 0.1
+                    borderWidth: 1
                 }}]
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
@@ -199,7 +197,7 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         
         // Monthly Members
         new Chart(document.getElementById('monthlyMemberChart'), {{
-            type: 'line',
+            type: 'bar',
             data: {{
                 labels: monthKeys,
                 datasets: {json.dumps(monthly_member_datasets)}

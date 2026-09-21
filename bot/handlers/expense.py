@@ -94,7 +94,8 @@ async def process_natural_language_expense(message: Message):
                 payer_name=display_name,
                 amount=amount,
                 currency=currency,
-                description=description
+                description=description,
+                group_name=message.chat.title or "Group"
             )
             
             # React with thumbs up to confirm it was saved silently!

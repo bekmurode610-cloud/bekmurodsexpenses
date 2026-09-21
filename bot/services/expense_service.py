@@ -10,9 +10,13 @@ async def add_group(group_id: int, group_name: str):
             new_group = Group(id=group_id, group_name=group_name)
             session.add(new_group)
             await session.commit()
+        elif group.group_name == "Group" and group_name != "Group":
+            # Update legacy "Group" names to actual title
+            group.group_name = group_name
+            await session.commit()
 
-async def ensure_member(telegram_id: int, group_id: int, name: str):
-    await add_group(group_id, "Group") # Basic fallback for group name
+async def ensure_member(telegram_id: int, group_id: int, name: str, group_name: str = "Group"):
+    await add_group(group_id, group_name)
     async with async_session() as session:
         result = await session.execute(
             select(Member).filter(Member.telegram_id == telegram_id, Member.group_id == group_id)
@@ -52,8 +56,8 @@ async def get_live_member_names(bot, group_id: int):
             member_names[m.telegram_id] = m.name # Fallback to DB
     return member_names
 
-async def add_expense(group_id: int, payer_id: int, payer_name: str, amount: float, currency: str, description: str):
-    await ensure_member(payer_id, group_id, payer_name)
+async def add_expense(group_id: int, payer_id: int, payer_name: str, amount: float, currency: str, description: str, group_name: str = "Group"):
+    await ensure_member(payer_id, group_id, payer_name, group_name)
     async with async_session() as session:
         expense = Expense(
             group_id=group_id,

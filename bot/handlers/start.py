@@ -28,7 +28,7 @@ async def cmd_join(message: Message):
         await message.answer("This bot is designed to work inside Telegram groups.")
         return
         
-    await ensure_member(message.from_user.id, message.chat.id, message.from_user.full_name)
+    await ensure_member(message.from_user.id, message.chat.id, message.from_user.full_name, message.chat.title or "Group")
     await message.answer(f"✅ {message.from_user.full_name} is now participating in group expenses.")
 
 @router.message(Command("members"))

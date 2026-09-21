@@ -38,7 +38,13 @@ async def process_panel_cb(callback: CallbackQuery):
             
         buttons = []
         for g in stats['recent_groups']:
-            name = g.group_name or f'Group {g.id}'
+            name = g.group_name
+            if not name or name == "Group":
+                try:
+                    chat = await callback.bot.get_chat(g.id)
+                    name = chat.title or f"Group {g.id}"
+                except Exception:
+                    name = f"Group {g.id}"
             buttons.append([InlineKeyboardButton(text=f'📈 {name}', callback_data=f'panel_dlg_{g.id}')])
             
         buttons.append([InlineKeyboardButton(text='🔙 Back', callback_data='panel_back')])
