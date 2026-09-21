@@ -31,18 +31,9 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             prev_month = f"{yr}-{mo-1:02d}" if mo > 1 else f"{yr-1}-12"
             month_keys.insert(0, prev_month)
             monthly_group[prev_month] = 0
-    
-    # Prepare data for Chart.js
-    # 1. Weekly Group Trend
-    weekly_group_chart_data = [weekly_group[k] for k in week_keys]
-    
-    # 2. Monthly Group Trend
-    monthly_group_chart_data = [monthly_group[k] for k in month_keys]
-    
-    # 3. Weekly Members Trend (Datasets)
-    # 4. Monthly Members Trend (Datasets)
-    # Assign distinct colors to members
-    colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF', '#8A2BE2', '#00FA9A', '#DC143C']
+            
+    # Premium colors matching the reference
+    colors = ['#005b96', '#d32f2f', '#ff8a65', '#424242', '#689f38', '#fbc02d', '#7b1fa2', '#0097a7']
     member_colors = {m: colors[i % len(colors)] for i, m in enumerate(members)}
     
     weekly_member_datasets = []
@@ -56,8 +47,8 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             'label': member,
             'data': w_data,
             'borderColor': member_colors[member],
-            'backgroundColor': member_colors[member],
-            'borderWidth': 1
+            'borderWidth': 2,
+            'backgroundColor': member_colors[member]
         })
         
         m_data = []
@@ -67,64 +58,108 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
             'label': member,
             'data': m_data,
             'borderColor': member_colors[member],
-            'backgroundColor': member_colors[member],
-            'borderWidth': 1
+            'borderWidth': 2,
+            'backgroundColor': member_colors[member]
         })
         
     html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{group_name} - Analytics Report</title>
-    <!-- Pico.css for clean styling without external heavy frameworks -->
+    <!-- Pico.css for layout -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
-    <!-- Chart.js for lightweight graphs -->
+    <!-- Chart.js for graphs -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .chart-container {{ position: relative; height: 400px; width: 100%; margin-bottom: 3rem; }}
+        body {{
+            background-color: #f7f9fc; /* Very light subtle background */
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #212121;
+        }}
+        .report-card {{
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            padding: 40px;
+            margin-top: 40px;
+            margin-bottom: 40px;
+            border-top: 6px solid #d32f2f; /* Premium red line on top */
+        }}
+        h1 {{
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #212121;
+            margin-bottom: 0.2rem;
+        }}
+        h2 {{
+            font-size: 1.1rem;
+            font-weight: 400;
+            color: #616161;
+            margin-bottom: 2rem;
+        }}
+        h3 {{
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #424242;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+        }}
+        .chart-container {{ 
+            position: relative; 
+            height: 450px; 
+            width: 100%; 
+            margin-bottom: 3rem; 
+        }}
+        .toggle-group {{
+            display: flex;
+            gap: 15px;
+            margin-bottom: 2rem;
+        }}
+        .toggle-group label {{
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+        }}
         table {{ font-size: 0.9rem; }}
+        th {{ background-color: #f5f5f5 !important; color: #424242 !important; font-weight: 600 !important; }}
     </style>
 </head>
 <body>
-    <main class="container">
+    <main class="container report-card">
         <hgroup>
-            <h1>{group_name} - Analytics Report</h1>
-            <h2>Visual breakdown of expenses (Primary Currency: {primary_currency})</h2>
+            <h1>Evolution of Expenses in {group_name}</h1>
+            <h2>Focus on tracked spending patterns (Primary Currency: {primary_currency})</h2>
         </hgroup>
         
         <!-- Toggle weekly/monthly -->
-        <fieldset>
-            <legend>Select Timeframe</legend>
+        <div class="toggle-group">
             <label for="radio-weekly">
                 <input type="radio" id="radio-weekly" name="timeframe" value="weekly" checked onclick="toggleTimeframe('weekly')">
-                Weekly
+                Weekly View
             </label>
             <label for="radio-monthly">
                 <input type="radio" id="radio-monthly" name="timeframe" value="monthly" onclick="toggleTimeframe('monthly')">
-                Monthly
+                Monthly View
             </label>
-        </fieldset>
+        </div>
 
         <section id="weekly-section">
-            <h3>Weekly Group Overall Trend</h3>
             <div class="chart-container">
                 <canvas id="weeklyGroupChart"></canvas>
             </div>
             
-            <h3>Weekly Member Trends</h3>
             <div class="chart-container">
                 <canvas id="weeklyMemberChart"></canvas>
             </div>
         </section>
         
         <section id="monthly-section" style="display: none;">
-            <h3>Monthly Group Overall Trend</h3>
             <div class="chart-container">
                 <canvas id="monthlyGroupChart"></canvas>
             </div>
             
-            <h3>Monthly Member Trends</h3>
             <div class="chart-container">
                 <canvas id="monthlyMemberChart"></canvas>
             </div>
@@ -170,84 +205,132 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         const monthKeys = {json.dumps(month_keys)};
         const currency = "{primary_currency}";
         
+        // Common chart styling to match premium aesthetics
+        const commonOptions = {{
+            responsive: true, 
+            maintainAspectRatio: false,
+            plugins: {{
+                legend: {{
+                    position: 'top',
+                    align: 'start',
+                    labels: {{
+                        usePointStyle: true,
+                        boxWidth: 8,
+                        boxHeight: 8,
+                        font: {{ size: 12, family: "'Helvetica Neue', Helvetica, Arial, sans-serif" }},
+                        color: '#424242'
+                    }}
+                }},
+                tooltip: {{
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    titleColor: '#212121',
+                    bodyColor: '#424242',
+                    borderColor: '#e0e0e0',
+                    borderWidth: 1,
+                    padding: 12,
+                    boxPadding: 6,
+                    usePointStyle: true
+                }}
+            }},
+            scales: {{
+                x: {{
+                    grid: {{ color: '#f0f0f0', drawBorder: false }},
+                    ticks: {{ color: '#757575', font: {{ size: 11 }} }}
+                }},
+                y: {{
+                    grid: {{ color: '#f0f0f0', drawBorder: false }},
+                    ticks: {{ color: '#757575', font: {{ size: 11 }} }}
+                }}
+            }},
+            interaction: {{ mode: 'index', intersect: false }}
+        }};
+
+        // Function to only show points at the end of the line
+        const customPointRadius = (ctx) => ctx.dataIndex === ctx.dataset.data.length - 1 ? 6 : 0;
+        const customHoverRadius = (ctx) => ctx.dataIndex === ctx.dataset.data.length - 1 ? 8 : 4;
+        const customPointStyle = (ctx) => {{
+            const ds = ctx.dataset;
+            ds.pointBackgroundColor = ds.borderColor;
+            ds.pointBorderColor = 'rgba(255, 255, 255, 0.8)';
+            ds.pointBorderWidth = 2;
+            ds.fill = false;
+            ds.tension = 0.3; // Slight curve
+        }};
+
         // Weekly Group
+        const wgData = [{{
+            label: 'Total Expenses (' + currency + ')',
+            data: weekKeys.map(k => {{ return {json.dumps(weekly_group)}[k] || 0; }}),
+            borderColor: '#005b96',
+            backgroundColor: '#005b96',
+            borderWidth: 2,
+            pointRadius: customPointRadius,
+            pointHoverRadius: customHoverRadius
+        }}];
+        wgData.forEach(customPointStyle);
+
         new Chart(document.getElementById('weeklyGroupChart'), {{
             type: 'line',
-            data: {{
-                labels: weekKeys,
-                datasets: [{{
-                    label: 'Total Expenses (' + currency + ')',
-                    data: weekKeys.map(k => {{ return {json.dumps(weekly_group)}[k]; }}),
-                    borderColor: '#2D9CDB',
-                    backgroundColor: 'rgba(45, 156, 219, 0.2)',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 6,
-                    pointHoverRadius: 8,
-                    pointBackgroundColor: '#2D9CDB'
-                }}]
-            }},
-            options: {{ responsive: true, maintainAspectRatio: false }}
+            data: {{ labels: weekKeys, datasets: wgData }},
+            options: {{
+                ...commonOptions,
+                plugins: {{ ...commonOptions.plugins, title: {{ display: true, text: 'Total Group Expenses Over Time', align: 'start', color: '#212121', font: {{ size: 14 }} }} }}
+            }}
         }});
         
         // Weekly Members
         let weeklyMemberDatasets = {json.dumps(weekly_member_datasets)};
         weeklyMemberDatasets.forEach(ds => {{
-            ds.type = 'line';
-            ds.tension = 0.4;
-            ds.pointRadius = 5;
-            ds.pointHoverRadius = 7;
-            ds.pointBackgroundColor = ds.borderColor;
-            ds.fill = false;
+            ds.pointRadius = customPointRadius;
+            ds.pointHoverRadius = customHoverRadius;
+            customPointStyle({{dataset: ds}});
         }});
 
         new Chart(document.getElementById('weeklyMemberChart'), {{
             type: 'line',
-            data: {{
-                labels: weekKeys,
-                datasets: weeklyMemberDatasets
-            }},
-            options: {{ responsive: true, maintainAspectRatio: false }}
+            data: {{ labels: weekKeys, datasets: weeklyMemberDatasets }},
+            options: {{
+                ...commonOptions,
+                plugins: {{ ...commonOptions.plugins, title: {{ display: true, text: 'Individual Spending Over Time', align: 'start', color: '#212121', font: {{ size: 14 }} }} }}
+            }}
         }});
         
         // Monthly Group
+        const mgData = [{{
+            label: 'Total Expenses (' + currency + ')',
+            data: monthKeys.map(k => {{ return {json.dumps(monthly_group)}[k] || 0; }}),
+            borderColor: '#d32f2f',
+            backgroundColor: '#d32f2f',
+            borderWidth: 2,
+            pointRadius: customPointRadius,
+            pointHoverRadius: customHoverRadius
+        }}];
+        mgData.forEach(customPointStyle);
+
         new Chart(document.getElementById('monthlyGroupChart'), {{
             type: 'line',
-            data: {{
-                labels: monthKeys,
-                datasets: [{{
-                    label: 'Total Expenses (' + currency + ')',
-                    data: monthKeys.map(k => {{ return {json.dumps(monthly_group)}[k]; }}),
-                    borderColor: '#9B51E0',
-                    backgroundColor: 'rgba(155, 81, 224, 0.2)',
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: 6,
-                    pointHoverRadius: 8,
-                    pointBackgroundColor: '#9B51E0'
-                }}]
-            }},
-            options: {{ responsive: true, maintainAspectRatio: false }}
+            data: {{ labels: monthKeys, datasets: mgData }},
+            options: {{
+                ...commonOptions,
+                plugins: {{ ...commonOptions.plugins, title: {{ display: true, text: 'Total Group Expenses Over Time', align: 'start', color: '#212121', font: {{ size: 14 }} }} }}
+            }}
         }});
         
         // Monthly Members
         let monthlyMemberDatasets = {json.dumps(monthly_member_datasets)};
         monthlyMemberDatasets.forEach(ds => {{
-            ds.type = 'line';
-            ds.tension = 0.4;
-            ds.pointRadius = 5;
-            ds.pointHoverRadius = 7;
-            ds.pointBackgroundColor = ds.borderColor;
-            ds.fill = false;
+            ds.pointRadius = customPointRadius;
+            ds.pointHoverRadius = customHoverRadius;
+            customPointStyle({{dataset: ds}});
         }});
 
         new Chart(document.getElementById('monthlyMemberChart'), {{
             type: 'line',
-            data: {{
-                labels: monthKeys,
-                datasets: monthlyMemberDatasets
-            }},
-            options: {{ responsive: true, maintainAspectRatio: false }}
+            data: {{ labels: monthKeys, datasets: monthlyMemberDatasets }},
+            options: {{
+                ...commonOptions,
+                plugins: {{ ...commonOptions.plugins, title: {{ display: true, text: 'Individual Spending Over Time', align: 'start', color: '#212121', font: {{ size: 14 }} }} }}
+            }}
         }});
         
         function toggleTimeframe(frame) {{
