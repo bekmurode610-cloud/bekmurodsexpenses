@@ -155,52 +155,80 @@ def generate_analytics_html(data: Dict[str, Any]) -> str:
         
         // Weekly Group
         new Chart(document.getElementById('weeklyGroupChart'), {{
-            type: 'bar',
+            type: 'line',
             data: {{
                 labels: weekKeys,
                 datasets: [{{
                     label: 'Total Expenses (' + currency + ')',
-                    data: {json.dumps(weekly_group_chart_data)},
-                    backgroundColor: 'rgba(45, 156, 219, 0.5)',
+                    data: weekKeys.map(k => {{ return {json.dumps(weekly_group)}[k]; }}),
                     borderColor: '#2D9CDB',
-                    borderWidth: 1
+                    backgroundColor: 'rgba(45, 156, 219, 0.2)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    pointBackgroundColor: '#2D9CDB'
                 }}]
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
         }});
         
         // Weekly Members
+        let weeklyMemberDatasets = {json.dumps(weekly_member_datasets)};
+        weeklyMemberDatasets.forEach(ds => {{
+            ds.type = 'line';
+            ds.tension = 0.4;
+            ds.pointRadius = 5;
+            ds.pointHoverRadius = 7;
+            ds.pointBackgroundColor = ds.borderColor;
+            ds.fill = false;
+        }});
+
         new Chart(document.getElementById('weeklyMemberChart'), {{
-            type: 'bar',
+            type: 'line',
             data: {{
                 labels: weekKeys,
-                datasets: {json.dumps(weekly_member_datasets)}
+                datasets: weeklyMemberDatasets
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
         }});
         
         // Monthly Group
         new Chart(document.getElementById('monthlyGroupChart'), {{
-            type: 'bar',
+            type: 'line',
             data: {{
                 labels: monthKeys,
                 datasets: [{{
                     label: 'Total Expenses (' + currency + ')',
-                    data: {json.dumps(monthly_group_chart_data)},
-                    backgroundColor: 'rgba(155, 81, 224, 0.5)',
+                    data: monthKeys.map(k => {{ return {json.dumps(monthly_group)}[k]; }}),
                     borderColor: '#9B51E0',
-                    borderWidth: 1
+                    backgroundColor: 'rgba(155, 81, 224, 0.2)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    pointBackgroundColor: '#9B51E0'
                 }}]
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
         }});
         
         // Monthly Members
+        let monthlyMemberDatasets = {json.dumps(monthly_member_datasets)};
+        monthlyMemberDatasets.forEach(ds => {{
+            ds.type = 'line';
+            ds.tension = 0.4;
+            ds.pointRadius = 5;
+            ds.pointHoverRadius = 7;
+            ds.pointBackgroundColor = ds.borderColor;
+            ds.fill = false;
+        }});
+
         new Chart(document.getElementById('monthlyMemberChart'), {{
-            type: 'bar',
+            type: 'line',
             data: {{
                 labels: monthKeys,
-                datasets: {json.dumps(monthly_member_datasets)}
+                datasets: monthlyMemberDatasets
             }},
             options: {{ responsive: true, maintainAspectRatio: false }}
         }});
