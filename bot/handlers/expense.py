@@ -85,9 +85,9 @@ async def process_natural_language_expense(message: Message):
                     ),
                 )
             except Exception as e2:
-                logger.warning(f"gemini-2.5-flash failed ({e2}), falling back to gemini-1.5-flash")
+                logger.warning(f"gemini-2.5-flash failed ({e2}), falling back to gemini-2.5-flash-lite")
                 response = client.models.generate_content(
-                    model='gemini-1.5-flash',
+                    model='gemini-2.5-flash-lite',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
