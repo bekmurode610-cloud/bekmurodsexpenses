@@ -10,18 +10,19 @@ try:
     from google.genai import types
     from pydantic import BaseModel, Field
     import json
+    
+    class ExpenseExtraction(BaseModel):
+        is_expense: bool = Field(description="True if the message implies an expense. Even short phrases like '140 ming go'stga' or '10 ming for taxi' should be considered True.")
+        amount: float = Field(description="The numeric amount paid. 0 if not an expense.", default=0)
+        currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
+        description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
+        
     HAS_GEMINI = True
 except ImportError:
     HAS_GEMINI = False
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-class ExpenseExtraction(BaseModel):
-    is_expense: bool = Field(description="True if the message implies an expense. Even short phrases like '140 ming go'stga' or '10 ming for taxi' should be considered True.")
-    amount: float = Field(description="The numeric amount paid. 0 if not an expense.", default=0)
-    currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
-    description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
 
 from bot.utils.auth import is_creator, is_allowed
 
