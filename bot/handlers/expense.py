@@ -63,40 +63,28 @@ async def process_natural_language_expense(message: Message):
         )
         
         try:
-            response = client.models.generate_content(
-                model='gemini-3.5-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ExpenseExtraction,
-                    temperature=0.0
-                ),
+            interaction = client.interactions.create(
+                model='gemini-3.7-flash',
+                input=prompt,
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": ExpenseExtraction.model_json_schema()
+                },
             )
         except Exception as e:
-            logger.warning(f"gemini-3.5-flash failed ({e}), falling back to gemini-2.5-flash")
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=ExpenseExtraction,
-                        temperature=0.0
-                    ),
-                )
-            except Exception as e2:
-                logger.warning(f"gemini-2.5-flash failed ({e2}), falling back to gemini-2.5-flash-lite")
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash-lite',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=ExpenseExtraction,
-                        temperature=0.0
-                    ),
-                )
+            logger.warning(f"gemini-3.7-flash failed ({e}), falling back to gemini-3.5-flash-lite")
+            interaction = client.interactions.create(
+                model='gemini-3.5-flash-lite',
+                input=prompt,
+                response_format={
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": ExpenseExtraction.model_json_schema()
+                },
+            )
         
-        data = json.loads(response.text)
+        data = json.loads(interaction.output_text)
         
         is_expense = data.get("is_expense", False)
         try:
