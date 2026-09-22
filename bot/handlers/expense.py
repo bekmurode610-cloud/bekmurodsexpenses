@@ -62,15 +62,39 @@ async def process_natural_language_expense(message: Message):
             "YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING TRAILING ZEROS LIKE 10000 or 140000. Always output the base number (e.g. 10 or 140)."
         )
         
-        response = client.models.generate_content(
-            model='gemini-3.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ExpenseExtraction,
-                temperature=0.0
-            ),
-        )
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=ExpenseExtraction,
+                    temperature=0.0
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"gemini-3.5-flash failed ({e}), falling back to gemini-2.5-flash")
+            try:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ExpenseExtraction,
+                        temperature=0.0
+                    ),
+                )
+            except Exception as e2:
+                logger.warning(f"gemini-2.5-flash failed ({e2}), falling back to gemini-1.5-flash")
+                response = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ExpenseExtraction,
+                        temperature=0.0
+                    ),
+                )
         
         data = json.loads(response.text)
         
