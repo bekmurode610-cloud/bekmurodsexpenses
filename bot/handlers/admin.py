@@ -110,3 +110,22 @@ async def process_settle(callback: CallbackQuery):
     await settle_group(callback.message.chat.id)
     await callback.message.edit_text('Success: All debts have been marked as settled. The current balance is now 0.')
     await callback.answer()
+
+@router.message(Command('debug_db'))
+async def cmd_debug_db(message: Message):
+    from bot.database.database import engine
+    from sqlalchemy import text
+    if not await is_admin(message): return
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text('ALTER TABLE expenses ADD COLUMN settled INTEGER DEFAULT 0'))
+        await message.answer('Success: Column settled added.')
+    except Exception as e:
+        await message.answer(f'Migration error: {str(e)}')
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text('SELECT settled FROM expenses LIMIT 1'))
+            await message.answer('Query success: Column exists.')
+    except Exception as e:
+        await message.answer(f'Query error: {str(e)}')
+
