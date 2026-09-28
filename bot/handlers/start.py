@@ -8,18 +8,15 @@ router = Router()
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message):
     text = (
-        "👋 Welcome to the Group Expense Tracker Bot!\n\n"
-        "I track shared expenses using AI. To add an expense, start your message with a `*`.\n"
-        "Example: `* 10 ming nonga` or `* I bought pizza for 50000 UZS`.\n"
-        "I will react with 👍 when I record an expense.\n\n"
-        "🔹 /balance - Show current balances and who owes whom\n"
-        "🔹 /report - Generate a complete expense report\n"
-        "🔹 /weekly - Generate a weekly expense report\n"
-        "🔹 /expenses - List recent expenses\n"
-        "🔹 /members - List active participants\n"
-        "🔹 /summarize - (Admins) Get a minimal total AI summary\n"
-        "🔹 /detail - (Admins) Get a detailed breakdown of who spent what\n\n"
-        "📝 **Note**: I only track expenses within Telegram groups. Make sure Group Privacy is OFF in BotFather."
+        "👋 **Group Expense Tracker**\n\n"
+        "Add an expense using `*`:\n"
+        "👉 `* 10 ming nonga`\n\n"
+        "📌 **Commands:**\n"
+        "🔹 /balance - Who owes whom\n"
+        "🔹 /expenses - Recent history\n"
+        "🔹 /weekly - Weekly report\n"
+        "🔹 /report - Full report\n"
+        "🔹 /members - Participants"
     )
     await message.answer(text)
 
