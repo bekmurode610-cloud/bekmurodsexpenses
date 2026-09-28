@@ -19,8 +19,7 @@ async def cmd_balance(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
 
-    if not await is_creator(message, message.bot):
-        return
+
 
     group_id = message.chat.id
     balances_by_currency = await calculate_balances(group_id)
@@ -61,8 +60,7 @@ async def cmd_report(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
 
-    if not await is_creator(message, message.bot):
-        return
+
 
     group_id = message.chat.id
     members = await get_members(group_id)
@@ -127,8 +125,7 @@ async def cmd_weekly(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
 
-    if not await is_creator(message, message.bot):
-        return
+
 
     group_id = message.chat.id
     
@@ -198,8 +195,7 @@ async def cmd_expenses(message: Message):
     if message.chat.type == "private":
         return await message.answer("This bot is designed to work inside Telegram groups.")
 
-    if not await is_creator(message, message.bot):
-        return
+
 
     group_id = message.chat.id
     expenses = await get_expenses(group_id, limit=20)
