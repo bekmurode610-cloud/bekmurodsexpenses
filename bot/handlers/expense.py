@@ -1,5 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message
+from aiogram.filters import Command
 from bot.services.expense_service import add_expense
 import logging
 import re
@@ -9,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 from bot.utils.auth import is_creator, is_allowed
 
+@router.message(Command("add"))
 @router.message(F.text & F.text.startswith("*"))
 async def process_natural_language_expense(message: Message):
     if message.chat.type == "private":
@@ -16,8 +18,16 @@ async def process_natural_language_expense(message: Message):
 
     if not await is_allowed(message):
         return
-
-    clean_text = message.text[1:].strip()
+        
+    # Get the text string, removing either /add or *
+    text = message.text
+    if text.startswith("/add"):
+        # Remove the command part, handle optional bot mention
+        text = re.sub(r'^/add(?:@[a-zA-Z0-9_]+)?\s*', '', text)
+    elif text.startswith("*"):
+        text = text[1:]
+        
+    clean_text = text.strip()
     match = re.search(r'(\d+(?:\.\d+)?)', clean_text)
     if not match:
         return
@@ -59,7 +69,7 @@ async def process_natural_language_expense(message: Message):
             )
             
             formatted_amount = f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
-            await message.reply(f"Recorded: {formatted_amount} {currency} - {description}")
+            await message.reply(f"✅ Recorded: {formatted_amount} {currency} - {description}")
                 
     except Exception as e:
         logger.error(f"Error processing rule-based expense: {e}")
