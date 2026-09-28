@@ -27,6 +27,7 @@ class Expense(Base):
     amount = Column(Float, nullable=False)
     currency = Column(String, nullable=False)
     description = Column(String, nullable=False)
+    settled = Column(Integer, default=0) # 0 for false, 1 for true (SQLite compatibility)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class UserRole(Base):

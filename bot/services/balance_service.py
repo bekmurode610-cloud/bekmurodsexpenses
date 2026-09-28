@@ -10,7 +10,7 @@ async def calculate_balances(group_id: int) -> Dict[str, Dict[int, float]]:
     if not members:
         return {}
 
-    expenses = await get_expenses(group_id, limit=10000) # Fetch all for now
+    expenses = await get_expenses(group_id, limit=10000, include_settled=False)
 
     # group by currency
     # currency -> list of expenses
@@ -55,6 +55,7 @@ async def calculate_weekly_balances(group_id: int, start_date, end_date) -> Dict
             .filter(Expense.group_id == group_id)
             .filter(Expense.created_at >= start_date)
             .filter(Expense.created_at <= end_date)
+            .filter(Expense.settled == 0)
         )
         expenses = result.scalars().all()
 

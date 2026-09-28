@@ -84,3 +84,31 @@ async def process_reset(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.message(Command('settle'))
+async def cmd_settle(message: Message):
+    if message.chat.type == 'private':
+        return await message.answer('This bot is designed to work inside Telegram groups.')
+        
+    if not await is_admin(message):
+        return
+        
+    from bot.keyboards.inline import get_settle_group_keyboard
+    await message.answer(
+        '?? Are you sure you want to mark all current expenses as SETTLED?\\n\\n'
+        'This will reset everyones current balance back to zero, but keep the history of expenses for the graphs and full reports.',
+        reply_markup=get_settle_group_keyboard()
+    )
+
+@router.callback_query(F.data == 'confirm_settle')
+async def process_settle(callback: CallbackQuery):
+    if callback.message.chat.type == 'private':
+        return
+        
+    if not await is_creator(callback.message, callback.bot, callback.from_user.id, callback.from_user.username):
+        return await callback.answer('You are not authorized to settle the group.', show_alert=True)
+        
+    from bot.services.expense_service import settle_group
+    await settle_group(callback.message.chat.id)
+    await callback.message.edit_text('? All debts have been marked as settled. The current balance is now 0.')
+    await callback.answer()
+

@@ -20,3 +20,11 @@ def get_reset_group_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Cancel", callback_data="cancel_action")
         ]
     ])
+
+def get_settle_group_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Yes, Settle Debts", callback_data="confirm_settle"),
+            InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_action")
+        ]
+    ])

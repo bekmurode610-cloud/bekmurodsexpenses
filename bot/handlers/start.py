@@ -16,6 +16,7 @@ async def cmd_start(message: Message):
         "🔹 /expenses - Recent history\n"
         "🔹 /weekly - Weekly report\n"
         "🔹 /report - Full report\n"
+        "🔹 /settle - Mark debts as settled (Admins)\n"
         "🔹 /members - Participants"
     )
     await message.answer(text)

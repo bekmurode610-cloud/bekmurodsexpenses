@@ -71,10 +71,13 @@ async def add_expense(group_id: int, payer_id: int, payer_name: str, amount: flo
         await session.commit()
         return expense
 
-async def get_expenses(group_id: int, limit: int = 50):
+async def get_expenses(group_id: int, limit: int = 50, include_settled: bool = True):
     async with async_session() as session:
+        query = select(Expense).filter(Expense.group_id == group_id)
+        if not include_settled:
+            query = query.filter(Expense.settled == 0)
         result = await session.execute(
-            select(Expense).filter(Expense.group_id == group_id).order_by(Expense.created_at.desc()).limit(limit)
+            query.order_by(Expense.created_at.desc()).limit(limit)
         )
         return result.scalars().all()
 
@@ -91,4 +94,13 @@ async def delete_expense(expense_id: int):
 async def reset_group(group_id: int):
     async with async_session() as session:
         await session.execute(delete(Expense).filter(Expense.group_id == group_id))
+        await session.commit()
+
+async def settle_group(group_id: int):
+    """Marks all current expenses as settled (settled=1) so they don't count in current balances."""
+    from sqlalchemy import update
+    async with async_session() as session:
+        await session.execute(
+            update(Expense).where(Expense.group_id == group_id).values(settled=1)
+        )
         await session.commit()
