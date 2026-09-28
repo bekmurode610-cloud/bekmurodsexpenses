@@ -9,7 +9,8 @@ router = Router()
 async def cmd_start(message: Message):
     text = (
         "👋 Welcome to the Group Expense Tracker Bot!\n\n"
-        "I track shared expenses passively using AI. Just chat normally! (e.g. 'I bought pizza for 50000 UZS').\n"
+        "I track shared expenses using AI. To add an expense, start your message with a `*`.\n"
+        "Example: `* 10 ming nonga` or `* I bought pizza for 50000 UZS`.\n"
         "I will react with 👍 when I record an expense.\n\n"
         "🔹 /balance - Show current balances and who owes whom\n"
         "🔹 /report - Generate a complete expense report\n"

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 from bot.utils.auth import is_creator, is_allowed
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text & F.text.startswith("*"))
 async def process_natural_language_expense(message: Message):
     # Ignore private chats
     if message.chat.type == "private":
@@ -36,10 +36,13 @@ async def process_natural_language_expense(message: Message):
     if not await is_allowed(message):
         return
 
+    # Remove the * prefix and strip whitespace
+    clean_text = message.text[1:].strip()
+
     # FAST PRE-FILTER: If the message doesn't contain a single number, it's almost certainly not an expense.
     # This prevents the bot from burning through Gemini API rate limits on normal chat conversations!
     import re
-    if not re.search(r'\d', message.text):
+    if not re.search(r'\d', clean_text):
         return
 
     # If Gemini is not configured, do nothing
@@ -51,7 +54,7 @@ async def process_natural_language_expense(message: Message):
         
         # Call Gemini to parse the message
         prompt = (
-            f"Extract expense information from this chat message: '{message.text}'\n"
+            f"Extract expense information from this chat message: '{clean_text}'\n"
             "CRITICAL NUMBER INSTRUCTION: The group uses 'ming' (thousands) as their base unit. "
             "You MUST extract the numeric amount strictly in 'ming' units without any trailing zeros. "
             "For example:\n"
