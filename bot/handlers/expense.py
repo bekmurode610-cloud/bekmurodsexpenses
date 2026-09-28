@@ -1,25 +1,8 @@
 from aiogram import Router, F
 from aiogram.types import Message
 from bot.services.expense_service import add_expense
-from config import GEMINI_API_KEY
 import logging
-
-# We will conditionally import and use gemini
-try:
-    from google import genai
-    from google.genai import types
-    from pydantic import BaseModel, Field
-    import json
-    
-    class ExpenseExtraction(BaseModel):
-        is_expense: bool = Field(description="True if the message implies an expense. Even short phrases like '140 ming go'stga' or '10 ming for taxi' should be considered True.")
-        amount: float = Field(description="The numeric amount paid. 0 if not an expense.", default=0)
-        currency: str = Field(description="The 3-letter currency code (e.g. UZS, USD, EUR). Empty string if none.", default="")
-        description: str = Field(description="Short description of what was paid for. Empty string if none.", default="")
-        
-    HAS_GEMINI = True
-except ImportError:
-    HAS_GEMINI = False
+import re
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -39,67 +22,42 @@ async def process_natural_language_expense(message: Message):
     # Remove the * prefix and strip whitespace
     clean_text = message.text[1:].strip()
 
-    # FAST PRE-FILTER: If the message doesn't contain a single number, it's almost certainly not an expense.
-    # This prevents the bot from burning through Gemini API rate limits on normal chat conversations!
-    import re
-    if not re.search(r'\d', clean_text):
-        return
-
-    # If Gemini is not configured, do nothing
-    if not HAS_GEMINI or not GEMINI_API_KEY:
+    # Find the first number in the text
+    match = re.search(r'(\d+(?:\.\d+)?)', clean_text)
+    if not match:
         return
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        amount_str = match.group(1)
+        amount = float(amount_str)
         
-        # Call Gemini to parse the message
-        prompt = (
-            f"Extract expense information from this chat message: '{clean_text}'\n"
-            "CRITICAL NUMBER INSTRUCTION: The group uses 'ming' (thousands) as their base unit. "
-            "You MUST extract the numeric amount strictly in 'ming' units without any trailing zeros. "
-            "For example:\n"
-            "- '10 ming' -> amount: 10\n"
-            "- '10000' or '10000 ming' -> amount: 10\n"
-            "- '88 ming' or '88000' -> amount: 88\n"
-            "- '14 ming' -> amount: 14\n"
-            "YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING TRAILING ZEROS LIKE 10000 or 140000. Always output the base number (e.g. 10 or 140)."
-        )
+        # Remove the number from the description text
+        description = clean_text.replace(amount_str, '', 1).strip()
         
-        try:
-            interaction = client.interactions.create(
-                model='gemini-3.7-flash',
-                input=prompt,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": ExpenseExtraction.model_json_schema()
-                },
-            )
-        except Exception as e:
-            logger.warning(f"gemini-3.7-flash failed ({e}), falling back to gemini-3.5-flash-lite")
-            interaction = client.interactions.create(
-                model='gemini-3.5-flash-lite',
-                input=prompt,
-                response_format={
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": ExpenseExtraction.model_json_schema()
-                },
-            )
-        
-        data = json.loads(interaction.output_text)
-        
-        is_expense = data.get("is_expense", False)
-        try:
-            amount = float(data.get("amount", 0))
-        except (ValueError, TypeError):
-            amount = 0.0
+        # Handle the "ming" logic for thousands
+        if re.search(r'\b(?:ming|k|min)\b', description, re.IGNORECASE):
+            # They explicitly said "ming" - remove it from description
+            description = re.sub(r'\b(?:ming|k|min)\b', '', description, count=1, flags=re.IGNORECASE).strip()
+        elif amount >= 1000:
+            # They wrote a large number like 10000. Convert to base unit.
+            amount = amount / 1000.0
             
-        currency = data.get("currency", "").upper()
-        
-        if is_expense and amount > 0 and currency:
-            description = data.get("description", "Expense")
+        # Clean up any leftover punctuation or spaces at the start of the description
+        description = re.sub(r'^[-_\s,]+', '', description).strip()
+        if not description:
+            description = "Expense"
             
+        # Check for currency (UZS, USD, etc). Default to UZS
+        currency = "UZS"
+        curr_match = re.search(r'\b(UZS|USD|EUR|RUB)\b', description, re.IGNORECASE)
+        if curr_match:
+            currency = curr_match.group(1).upper()
+            description = re.sub(r'\b(UZS|USD|EUR|RUB)\b', '', description, count=1, flags=re.IGNORECASE).strip()
+            
+        # Clean up one last time
+        description = description.strip()
+        
+        if amount > 0:
             # Use username if available, otherwise full name
             display_name = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
             
@@ -121,14 +79,8 @@ async def process_natural_language_expense(message: Message):
             except Exception as e:
                 # Fallback if bot doesn't have reaction permissions
                 formatted_amount = f"{amount:,.0f}" if amount.is_integer() else f"{amount:,.2f}"
-                await message.reply(f"✅ Recorded: {formatted_amount} {currency} — {description}")
+                await message.reply(f"✅ Recorded: {formatted_amount} {currency} ➔ {description}")
                 
     except Exception as e:
-        logger.error(f"Error processing message with Gemini: {e}")
-        error_msg = str(e)
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            await message.answer("Wait 10 seconds.")
-        elif "503" in error_msg or "UNAVAILABLE" in error_msg:
-            await message.answer("Servers busy, wait.")
-        else:
-            await message.answer(f"API Error: {error_msg}")
+        logger.error(f"Error processing rule-based expense: {e}")
+        await message.answer(f"Error parsing expense: {str(e)}")
