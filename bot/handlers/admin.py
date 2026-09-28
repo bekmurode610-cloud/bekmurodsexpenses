@@ -37,7 +37,7 @@ async def cmd_delete(message: Message):
         
     await message.answer(
         f"Are you sure you want to delete this expense?\n"
-        f"{expense.payer_name} — {expense.amount} {expense.currency} — {expense.description}",
+        f"{expense.payer_name} - {expense.amount} {expense.currency} - {expense.description}",
         reply_markup=get_delete_expense_keyboard(expense_id)
     )
 
@@ -55,7 +55,7 @@ async def process_delete(callback: CallbackQuery):
             return await callback.answer("You are not authorized to delete this.", show_alert=True)
             
     await delete_expense(expense_id)
-    await callback.message.edit_text("✅ Expense deleted.")
+    await callback.message.edit_text("Deleted: Expense deleted.")
     await callback.answer()
 
 @router.message(Command("reset"))
@@ -67,7 +67,7 @@ async def cmd_reset(message: Message):
         return
         
     await message.answer(
-        "⚠️ This will permanently delete all expense records for this group.",
+        "Warning: This will permanently delete all expense records for this group.",
         reply_markup=get_reset_group_keyboard()
     )
 
@@ -80,9 +80,8 @@ async def process_reset(callback: CallbackQuery):
         return await callback.answer("You are not authorized to reset the group.", show_alert=True)
         
     await reset_group(callback.message.chat.id)
-    await callback.message.edit_text("✅ All expense records for this group have been deleted.")
+    await callback.message.edit_text("Success: All expense records for this group have been deleted.")
     await callback.answer()
-
 
 @router.message(Command('settle'))
 async def cmd_settle(message: Message):
@@ -94,8 +93,8 @@ async def cmd_settle(message: Message):
         
     from bot.keyboards.inline import get_settle_group_keyboard
     await message.answer(
-        '?? Are you sure you want to mark all current expenses as SETTLED?\\n\\n'
-        'This will reset everyones current balance back to zero, but keep the history of expenses for the graphs and full reports.',
+        'Are you sure you want to mark all current expenses as SETTLED?\n\n'
+        'This will reset everyone`s current balance back to zero, but keep the history of expenses for the graphs and full reports.',
         reply_markup=get_settle_group_keyboard()
     )
 
@@ -109,6 +108,5 @@ async def process_settle(callback: CallbackQuery):
         
     from bot.services.expense_service import settle_group
     await settle_group(callback.message.chat.id)
-    await callback.message.edit_text('? All debts have been marked as settled. The current balance is now 0.')
+    await callback.message.edit_text('Success: All debts have been marked as settled. The current balance is now 0.')
     await callback.answer()
-
