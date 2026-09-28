@@ -8,16 +8,17 @@ router = Router()
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message):
     text = (
-        "👋 **Group Expense Tracker**\n\n"
-        "Add an expense using `*`:\n"
-        "👉 `* 10 ming nonga`\n\n"
-        "📌 **Commands:**\n"
-        "🔹 /balance - Who owes whom\n"
-        "🔹 /expenses - Recent history\n"
-        "🔹 /weekly - Weekly report\n"
-        "🔹 /report - Full report\n"
-        "🔹 /settle - Mark debts as settled (Admins)\n"
-        "🔹 /members - Participants"
+        "<b>Group Expense Tracker</b>\n\n"
+        "Add an expense using <code>*</code>:\n"
+        "<code>* 10 ming nonga</code>\n\n"
+        "<b>Commands:</b>\n"
+        "/balance - Who owes whom\n"
+        "/expenses - Recent history\n"
+        "/weekly - Weekly report\n"
+        "/report - Full report\n"
+        "/settle - Mark debts as settled (Admins)\n"
+        "/members - Participants\n\n"
+        "<i>Note: I only track expenses within Telegram groups. Make sure Group Privacy is OFF in BotFather.</i>"
     )
     await message.answer(text)
 
@@ -42,7 +43,7 @@ async def cmd_members(message: Message):
         await message.answer("No active participants found. Use /expense or /join to participate.")
         return
         
-    text = "👥 **Active Participants:**\n\n"
+    text = "<b>Active Participants:</b>\n\n"
     for idx, m in enumerate(members, 1):
         text += f"{idx}. {m.name}\n"
     await message.answer(text)
