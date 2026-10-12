@@ -97,19 +97,29 @@ export default async function (message, ctx) {
           groupName: message.chat.title || 'Group',
         });
 
-        await api.sendMessage({
+        const sendParams = {
           chat_id: chatId,
           text: `✅ Recorded: ${formatAmount(amount)} ${currency} - ${description}`,
-          reply_parameters: { message_id: message.message_id },
-        });
+        };
+        if (message.message_id) {
+          sendParams.reply_parameters = { message_id: message.message_id };
+        }
+        await api.sendMessage(sendParams);
       }
     } catch (err) {
       console.error('Error adding expense:', err);
-      await api.sendMessage({
-        chat_id: chatId,
-        text: `Error parsing expense: ${err.message}`,
-        reply_parameters: { message_id: message.message_id },
-      });
+      try {
+        const errParams = {
+          chat_id: chatId,
+          text: `Error parsing expense: ${err.message}`,
+        };
+        if (message.message_id) {
+          errParams.reply_parameters = { message_id: message.message_id };
+        }
+        await api.sendMessage(errParams);
+      } catch (sendErr) {
+        console.error('Could not send error message:', sendErr);
+      }
     }
     return;
   }
