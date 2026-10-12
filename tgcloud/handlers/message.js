@@ -5,6 +5,8 @@ import {
   addExpense,
   getExpenses,
   getExpense,
+  addMemberByName,
+  syncChatAdmins,
 } from '../lib/db-service.js';
 import { calculateBalances, calculateSettlements } from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
@@ -42,8 +44,9 @@ export default async function (message, ctx) {
     return;
   }
 
-  // Auto-record member activity
+  // Auto-record member activity and sync chat admins
   await ensureMember(userId, chatId, displayName, message.chat.title || 'Group');
+  await syncChatAdmins(api, chatId, message.chat.title || 'Group');
 
   // 2. Parse expense entry: starts with '*' or '/add'
   if (text.startsWith('*') || text.startsWith('/add')) {
@@ -97,14 +100,24 @@ export default async function (message, ctx) {
           groupName: message.chat.title || 'Group',
         });
 
-        const sendParams = {
-          chat_id: chatId,
-          text: `✅ Recorded: ${formatAmount(amount)} ${currency} - ${description}`,
-        };
+        // Respond by putting a reaction on the message instead of sending a separate message
         if (message.message_id) {
-          sendParams.reply_parameters = { message_id: message.message_id };
+          try {
+            await api.setMessageReaction({
+              chat_id: chatId,
+              message_id: message.message_id,
+              reaction: [{ type: 'emoji', emoji: '👍' }],
+            });
+          } catch (reactErr) {
+            console.warn('Could not set message reaction:', reactErr);
+            // Fallback only if reactions are disabled in the chat
+            await api.sendMessage({
+              chat_id: chatId,
+              text: `✅ Recorded: ${formatAmount(amount)} ${currency} - ${description}`,
+              reply_parameters: { message_id: message.message_id },
+            });
+          }
         }
-        await api.sendMessage(sendParams);
       }
     } catch (err) {
       console.error('Error adding expense:', err);
@@ -141,7 +154,8 @@ export default async function (message, ctx) {
         '/weekly - Weekly report\n' +
         '/report - Full report\n' +
         '/settle - Mark debts as settled (Admins)\n' +
-        '/members - Participants\n\n' +
+        '/members - Participants\n' +
+        '/addmember - Add a friend (e.g. /addmember @user)\n\n' +
         '<i>No servers required. Running directly on Telegram Serverless.</i>';
 
       await api.sendMessage({
@@ -184,7 +198,34 @@ export default async function (message, ctx) {
       break;
     }
 
+    case '/addmember': {
+      const parts = text.split(/\s+/).slice(1);
+      if (parts.length === 0) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Please specify the username or name to add. Example: <code>/addmember @username</code>',
+          parse_mode: 'HTML',
+        });
+        return;
+      }
+
+      const added = [];
+      for (const name of parts) {
+        if (name && name.trim()) {
+          await addMemberByName(chatId, name.trim(), message.chat.title || 'Group');
+          added.push(name.trim());
+        }
+      }
+
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `Added ${added.join(', ')} to group participants.`,
+      });
+      break;
+    }
+
     case '/balance': {
+      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
       const groupMembers = await getMembers(chatId);
       const groupExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: false });
 
@@ -192,6 +233,23 @@ export default async function (message, ctx) {
         await api.sendMessage({
           chat_id: chatId,
           text: 'There are no active expenses recorded for this group yet.',
+        });
+        return;
+      }
+
+      if (groupMembers.length <= 1) {
+        const onlyMember = groupMembers[0]?.name || 'You';
+        await api.sendMessage({
+          chat_id: chatId,
+          text:
+            `<b>Current Balance</b>\n\n` +
+            `UZS Balance\n${onlyMember}: 0 ming\n\n` +
+            `ℹ️ <i>Notice: Only 1 person (${onlyMember}) is registered in this group so far.</i>\n` +
+            `Expenses are split equally among all registered participants.\n\n` +
+            `👉 <b>To add your friends to split the expense:</b>\n` +
+            `• Type: <code>/addmember @username</code>\n` +
+            `• Or have them send any message or type <code>/join</code> in this group!`,
+          parse_mode: 'HTML',
         });
         return;
       }

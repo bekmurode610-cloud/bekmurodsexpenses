@@ -13,16 +13,66 @@ export async function addOrUpdateGroup(groupId, groupName) {
 
 export async function ensureMember(telegramId, groupId, name, groupName) {
   await addOrUpdateGroup(groupId, groupName);
-  const existing = await db
+
+  // Check if member exists by telegramId
+  let existing = await db
     .select()
     .from(members)
     .where(and(eq(members.telegramId, telegramId), eq(members.groupId, groupId)))
     .get();
 
+  // If not found by ID, check if there is a placeholder member with the same username
+  if (!existing && name && name.startsWith('@')) {
+    existing = await db
+      .select()
+      .from(members)
+      .where(and(eq(members.name, name), eq(members.groupId, groupId)))
+      .get();
+    if (existing) {
+      await db.update(members).set({ telegramId }).where(eq(members.id, existing.id)).run();
+      return;
+    }
+  }
+
   if (!existing) {
     await db.insert(members).values({ telegramId, groupId, name }).run();
   } else if (name && existing.name !== name) {
     await db.update(members).set({ name }).where(eq(members.id, existing.id)).run();
+  }
+}
+
+export async function addMemberByName(groupId, name, groupName) {
+  await addOrUpdateGroup(groupId, groupName);
+  const cleanName = name.trim();
+  const existing = await db
+    .select()
+    .from(members)
+    .where(and(eq(members.name, cleanName), eq(members.groupId, groupId)))
+    .get();
+
+  if (!existing) {
+    const placeholderId = -(Math.floor(Date.now() % 1000000000) + Math.floor(Math.random() * 1000));
+    await db.insert(members).values({ telegramId: placeholderId, groupId, name: cleanName }).run();
+    return true;
+  }
+  return false;
+}
+
+export async function syncChatAdmins(api, chatId, groupTitle) {
+  try {
+    const admins = await api.getChatAdministrators({ chat_id: chatId });
+    if (Array.isArray(admins)) {
+      for (const admin of admins) {
+        if (!admin.user.is_bot) {
+          const name = admin.user.username
+            ? `@${admin.user.username}`
+            : [admin.user.first_name, admin.user.last_name].filter(Boolean).join(' ') || 'User';
+          await ensureMember(admin.user.id, chatId, name, groupTitle);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not sync chat admins:', err);
   }
 }
 
