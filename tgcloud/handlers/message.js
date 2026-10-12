@@ -225,7 +225,6 @@ export default async function (message, ctx) {
     }
 
     case '/balance': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
       const groupMembers = await getMembers(chatId);
       const groupExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: false });
 
@@ -292,6 +291,8 @@ export default async function (message, ctx) {
       break;
     }
 
+    case '/detail':
+    case '/details':
     case '/report': {
       const groupMembers = await getMembers(chatId);
       const groupExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });

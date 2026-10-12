@@ -116,10 +116,12 @@ export async function getExpenses(groupId, { limit = 50, includeSettled = true, 
     conditions.push(eq(expenses.settled, 0));
   }
   if (startDate) {
-    conditions.push(gte(expenses.createdAt, startDate));
+    const startSec = startDate instanceof Date ? Math.floor(startDate.getTime() / 1000) : startDate;
+    conditions.push(gte(expenses.createdAt, startSec));
   }
   if (endDate) {
-    conditions.push(lte(expenses.createdAt, endDate));
+    const endSec = endDate instanceof Date ? Math.floor(endDate.getTime() / 1000) : endDate;
+    conditions.push(lte(expenses.createdAt, endSec));
   }
 
   return await query
