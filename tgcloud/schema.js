@@ -31,11 +31,13 @@ export const expenses = table('expenses', {
   amount: real('amount').notNull(),
   currency: text('currency').notNull(),
   description: text('description').notNull(),
+  messageId: integer('message_id'),
   settled: integer('settled').default(0), // 0: unsettled, 1: settled
   createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 }, (t) => ({
   expenseGroupIdx: index('idx_expenses_group').on(t.groupId),
   expenseSettledIdx: index('idx_expenses_settled').on(t.settled),
+  expenseMsgIdx: index('idx_expenses_msg').on(t.groupId, t.messageId),
 }));
 
 export const userRoles = table('user_roles', {

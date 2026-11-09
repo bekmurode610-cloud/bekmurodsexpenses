@@ -133,6 +133,7 @@ export default async function (message, ctx) {
         amount,
         currency,
         description,
+        messageId: message.message_id,
         groupName: message.chat.title || 'Group',
       });
 

@@ -208,6 +208,7 @@ export async function addExpense({
   amount,
   currency,
   description,
+  messageId = null,
   groupName,
 }) {
   await ensureMember(payerId, groupId, payerName, groupName);
@@ -221,12 +222,26 @@ export async function addExpense({
       amount,
       currency: currency.toUpperCase(),
       description,
+      messageId: messageId || null,
       settled: 0,
     })
     .returning()
     .run();
 
   return inserted;
+}
+
+export async function getExpenseByMessageId(groupId, messageId) {
+  if (!messageId) return null;
+  return await db
+    .select()
+    .from(expenses)
+    .where(and(eq(expenses.groupId, groupId), eq(expenses.messageId, messageId)))
+    .get();
+}
+
+export async function updateExpense(expenseId, updates) {
+  return await db.update(expenses).set(updates).where(eq(expenses.id, expenseId)).run();
 }
 
 export async function getExpenses(
