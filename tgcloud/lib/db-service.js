@@ -41,6 +41,10 @@ export async function setGroupDutyRoster(groupId, rosterList) {
   await db.update(groups).set({ dutyRoster: rosterList }).where(eq(groups.id, groupId)).run();
 }
 
+export async function setGroupExpenseRoster(groupId, rosterList) {
+  await db.update(groups).set({ expenseRoster: rosterList }).where(eq(groups.id, groupId)).run();
+}
+
 export async function setGroupDutyTime(groupId, dutyTime) {
   await db.update(groups).set({ dutyTime }).where(eq(groups.id, groupId)).run();
 }

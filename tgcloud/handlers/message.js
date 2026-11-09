@@ -11,6 +11,7 @@ import {
   getGroup,
   shiftGroupDutyOffset,
   setGroupDutyRoster,
+  setGroupExpenseRoster,
   setGroupDutyTime,
   checkAndAnnounceDuty,
 } from '../lib/db-service.js';
@@ -20,6 +21,7 @@ import {
   getUzbekistanWeekBounds,
   getDutySchedule,
   getDutyRosterList,
+  getExpenseRosterList,
   getDutyPerson,
   formatMinimalDutyNotification,
   getUztTimeInfo,
@@ -186,6 +188,7 @@ export default async function (message, ctx) {
         '/weekly - Haftalik hisobot\n' +
         '/detail - To\'liq hisobot\n\n' +
         'Admin buyruqlari:\n' +
+        '/setmembers @u1 @u2 - Xarajat a\'zolarini belgilash\n' +
         '/setduty @u1 @u2 - Navbatchilarni kiritish\n' +
         '/setdutytime 09:00 - Eslatma vaqtini sozlash\n' +
         '/duty next - Keyingi kishiga o\'tkazish\n' +
@@ -211,6 +214,76 @@ export default async function (message, ctx) {
     }
 
     case '/members': {
+      const parts = text.split(/\s+/).slice(1);
+      const sub = (parts[0] || '').toLowerCase();
+
+      if (sub === 'set') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({
+            chat_id: chatId,
+            text: 'Only group admins can set members.',
+          });
+          return;
+        }
+
+        const roster = parts
+          .slice(1)
+          .map((p) => p.replace(/,/g, '').trim())
+          .filter(Boolean);
+        if (roster.length === 0) {
+          await api.sendMessage({
+            chat_id: chatId,
+            text: 'Usage: /members set @user1 @user2 @user3',
+          });
+          return;
+        }
+
+        await setGroupExpenseRoster(chatId, roster);
+        for (const name of roster) {
+          await addMemberByName(chatId, name, message.chat.title || 'Group');
+        }
+
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `A'zolar ro'yxati: ${roster.join(', ')}`,
+        });
+        return;
+      }
+
+      if (sub === 'clear' || sub === 'reset') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({
+            chat_id: chatId,
+            text: 'Only group admins can clear members.',
+          });
+          return;
+        }
+
+        await setGroupExpenseRoster(chatId, null);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: "Xarajat a'zolari ro'yxati tozalandi.",
+        });
+        return;
+      }
+
+      const grp = await getGroup(chatId);
+      const roster = getExpenseRosterList(grp);
+
+      if (roster && roster.length > 0) {
+        let resp = "A'zolar:\n";
+        roster.forEach((name, idx) => {
+          resp += `${idx + 1}. ${name}\n`;
+        });
+        await api.sendMessage({
+          chat_id: chatId,
+          text: resp.trim(),
+        });
+        return;
+      }
+
       const allMembers = await getMembers(chatId);
       if (!allMembers || allMembers.length === 0) {
         await api.sendMessage({
@@ -220,7 +293,7 @@ export default async function (message, ctx) {
         return;
       }
 
-      let resp = 'Participants:\n\n';
+      let resp = "A'zolar:\n";
       allMembers.forEach((m, idx) => {
         resp += `${idx + 1}. ${m.name}\n`;
       });
@@ -228,6 +301,49 @@ export default async function (message, ctx) {
       await api.sendMessage({
         chat_id: chatId,
         text: resp.trim(),
+      });
+      break;
+    }
+
+    case '/setmembers': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can set members.',
+        });
+        return;
+      }
+
+      const rawParts = text.split(/\s+/).slice(1);
+      if (rawParts.length === 0) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Usage: /setmembers @user1 @user2 @user3',
+        });
+        return;
+      }
+
+      if (rawParts[0].toLowerCase() === 'clear' || rawParts[0].toLowerCase() === 'reset') {
+        await setGroupExpenseRoster(chatId, null);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: "Xarajat a'zolari ro'yxati tozalandi.",
+        });
+        return;
+      }
+
+      const roster = rawParts
+        .map((p) => p.replace(/,/g, '').trim())
+        .filter(Boolean);
+      await setGroupExpenseRoster(chatId, roster);
+      for (const name of roster) {
+        await addMemberByName(chatId, name, message.chat.title || 'Group');
+      }
+
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `A'zolar ro'yxati: ${roster.join(', ')}`,
       });
       break;
     }
@@ -459,6 +575,8 @@ export default async function (message, ctx) {
     case '/balance': {
       const groupMembers = await getMembers(chatId);
       const groupExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: false });
+      const grp = await getGroup(chatId);
+      const roster = getExpenseRosterList(grp);
 
       if (!groupExpenses || groupExpenses.length === 0) {
         await api.sendMessage({
@@ -468,7 +586,8 @@ export default async function (message, ctx) {
         return;
       }
 
-      if (groupMembers.length <= 1) {
+      const numParticipants = roster && roster.length > 0 ? roster.length : groupMembers.length;
+      if (numParticipants <= 1) {
         const onlyMember = groupMembers[0]?.name || displayName;
         const total = groupExpenses.reduce((s, e) => s + e.amount, 0);
         await api.sendMessage({
@@ -476,14 +595,13 @@ export default async function (message, ctx) {
           text:
             `Current Balance\n\n` +
             `${onlyMember} paid: ${formatMoney(total, 'UZS')}\n` +
-            `Balance: 0 ming (only 1 participant registered)\n\n` +
-            `Add your roommates so expenses split among everyone:\n` +
-            `/addmember @username`,
+            `Balance: 0 (only 1 participant registered)\n\n` +
+            `Admin: /setmembers @user1 @user2`,
         });
         return;
       }
 
-      const balancesByCurrency = calculateBalances(groupMembers, groupExpenses);
+      const balancesByCurrency = calculateBalances(groupMembers, groupExpenses, grp);
       const memberMap = buildMemberNameMap(groupMembers, groupExpenses);
 
       let resp = 'Current Balance\n\n';
@@ -531,6 +649,7 @@ export default async function (message, ctx) {
     case '/report': {
       const groupMembers = await getMembers(chatId);
       const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
+      const grp = await getGroup(chatId);
 
       if (!allExpenses || allExpenses.length === 0) {
         await api.sendMessage({
@@ -557,7 +676,7 @@ export default async function (message, ctx) {
         ? 'Group Expense Report (All Settled History)\n\n'
         : 'Group Expense Report (Current Unsettled Cycle)\n\n';
 
-      const balancesByCur = calculateBalances(groupMembers, activeList);
+      const balancesByCur = calculateBalances(groupMembers, activeList, grp);
 
       for (const [cur, curExpenses] of Object.entries(byCurrency)) {
         const balances = balancesByCur[cur] || {};
@@ -636,9 +755,10 @@ export default async function (message, ctx) {
       }
 
       const groupMembers = await getMembers(chatId);
+      const grp = await getGroup(chatId);
       const memberMap = buildMemberNameMap(groupMembers, weekExpenses);
       const unsettledWeek = weekExpenses.filter((e) => e.settled === 0);
-      const balancesByCur = calculateBalances(groupMembers, unsettledWeek);
+      const balancesByCur = calculateBalances(groupMembers, unsettledWeek, grp);
 
       let resp = `Weekly Report (${monLabel} - ${sunLabel})\n\n`;
 

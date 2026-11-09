@@ -15,15 +15,33 @@ export function getUztTimeInfo() {
   return { nowUzt, dateStr, timeStr, dayIndex };
 }
 
+export function normalizeName(str) {
+  return (str || '').trim().replace(/^@/, '').toLowerCase();
+}
+
+/**
+ * Returns the effective expense roster array of usernames/names if set by admin,
+ * or null if unconfigured (falling back to all group members).
+ */
+export function getExpenseRosterList(group) {
+  if (group?.expenseRoster && Array.isArray(group.expenseRoster) && group.expenseRoster.length > 0) {
+    return group.expenseRoster
+      .map((item) => (typeof item === 'string' ? item : item.name))
+      .filter(Boolean);
+  }
+  return null;
+}
+
 /**
  * Zero-Sum Group Expense Balance Formula:
- * Let P be the unified set of all group members and active expense payers (N = |P|).
- * Total group spend: T = sum(amount)
+ * If an official expense roster is defined, only members matching the roster
+ * share the total expense bill (N = |Roster|).
+ * Any active payer gets credited their paid amount.
  * Fair share per person: F = T / N
- * Net balance for person i: B_i = Paid_i - F
+ * Net balance for person i: B_i = Paid_i - (isSplitter ? F : 0)
  * Guarantees: sum(B_i) === 0
  */
-export function calculateBalances(members, expenses) {
+export function calculateBalances(members, expenses, group = null) {
   const expensesByCurrency = {};
   for (const exp of expenses) {
     const cur = (exp.currency || 'UZS').toUpperCase();
@@ -34,20 +52,33 @@ export function calculateBalances(members, expenses) {
   }
 
   const balancesByCurrency = {};
+  const rosterNames = getExpenseRosterList(group);
 
   for (const [currency, curExpenses] of Object.entries(expensesByCurrency)) {
-    // Build unified participant set P = Members U Payers
-    const participantIds = new Set(members.map((m) => Number(m.telegramId)));
-    for (const exp of curExpenses) {
-      participantIds.add(Number(exp.payerId));
+    const splittersIds = new Set();
+
+    if (rosterNames && rosterNames.length > 0) {
+      const normRoster = new Set(rosterNames.map((n) => normalizeName(n)));
+      for (const m of members) {
+        if (normRoster.has(normalizeName(m.name))) {
+          splittersIds.add(Number(m.telegramId));
+        }
+      }
     }
 
-    const numParticipants = participantIds.size;
+    // Fallback: if no official roster or no registered member matched roster, use all group members
+    if (splittersIds.size === 0) {
+      for (const m of members) {
+        splittersIds.add(Number(m.telegramId));
+      }
+    }
+
+    const numSplitters = splittersIds.size;
     const totalSpent = curExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const fairShare = numParticipants > 0 ? totalSpent / numParticipants : 0;
+    const fairShare = numSplitters > 0 ? totalSpent / numSplitters : 0;
 
     const balances = {};
-    for (const pid of participantIds) {
+    for (const pid of splittersIds) {
       balances[pid] = -fairShare;
     }
 
