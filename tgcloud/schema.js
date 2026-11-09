@@ -1,8 +1,12 @@
-import { table, integer, real, text, sql, index } from 'sdk/db';
+import { table, integer, real, text, sql, index, json } from 'sdk/db';
 
 export const groups = table('groups', {
   id: integer('id').primaryKey(), // Telegram chat.id
   groupName: text('group_name'),
+  dutyOffset: integer('duty_offset').default(0),
+  dutyTime: text('duty_time').default('09:00'),
+  dutyRoster: json('duty_roster'),
+  lastDutyDate: text('last_duty_date'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 });
 
@@ -11,6 +15,7 @@ export const members = table('members', {
   telegramId: integer('telegram_id').notNull(),
   groupId: integer('group_id').notNull(),
   name: text('name').notNull(),
+  dutyOrder: integer('duty_order').default(0),
   firstSeen: integer('first_seen', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 }, (t) => ({
   memberGroupIdx: index('idx_members_group').on(t.groupId),

@@ -1,7 +1,32 @@
+const UZT_OFFSET_MS = 5 * 3600 * 1000;
+const DAY_MS = 86400 * 1000;
+
+export function getUztTimeInfo() {
+  const nowUztMs = Date.now() + UZT_OFFSET_MS;
+  const nowUzt = new Date(nowUztMs);
+  const yyyy = nowUzt.getUTCFullYear();
+  const mm = String(nowUzt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(nowUzt.getUTCDate()).padStart(2, '0');
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+  const hh = String(nowUzt.getUTCHours()).padStart(2, '0');
+  const min = String(nowUzt.getUTCMinutes()).padStart(2, '0');
+  const timeStr = `${hh}:${min}`;
+  const dayIndex = Math.floor(nowUztMs / DAY_MS);
+  return { nowUzt, dateStr, timeStr, dayIndex };
+}
+
+/**
+ * Zero-Sum Group Expense Balance Formula:
+ * Let P be the unified set of all group members and active expense payers (N = |P|).
+ * Total group spend: T = sum(amount)
+ * Fair share per person: F = T / N
+ * Net balance for person i: B_i = Paid_i - F
+ * Guarantees: sum(B_i) === 0
+ */
 export function calculateBalances(members, expenses) {
   const expensesByCurrency = {};
   for (const exp of expenses) {
-    const cur = exp.currency || 'UZS';
+    const cur = (exp.currency || 'UZS').toUpperCase();
     if (!expensesByCurrency[cur]) {
       expensesByCurrency[cur] = [];
     }
@@ -9,23 +34,26 @@ export function calculateBalances(members, expenses) {
   }
 
   const balancesByCurrency = {};
-  const numMembers = members.length;
 
   for (const [currency, curExpenses] of Object.entries(expensesByCurrency)) {
+    // Build unified participant set P = Members U Payers
+    const participantIds = new Set(members.map((m) => Number(m.telegramId)));
+    for (const exp of curExpenses) {
+      participantIds.add(Number(exp.payerId));
+    }
+
+    const numParticipants = participantIds.size;
     const totalSpent = curExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const fairShare = numMembers > 0 ? totalSpent / numMembers : 0;
+    const fairShare = numParticipants > 0 ? totalSpent / numParticipants : 0;
 
     const balances = {};
-    for (const m of members) {
-      balances[m.telegramId] = -fairShare;
+    for (const pid of participantIds) {
+      balances[pid] = -fairShare;
     }
 
     for (const exp of curExpenses) {
-      if (balances[exp.payerId] !== undefined) {
-        balances[exp.payerId] += exp.amount;
-      } else {
-        balances[exp.payerId] = -fairShare + exp.amount;
-      }
+      const pid = Number(exp.payerId);
+      balances[pid] = (balances[pid] || 0) + exp.amount;
     }
 
     balancesByCurrency[currency] = balances;
@@ -74,4 +102,103 @@ export function calculateSettlements(balances) {
   }
 
   return settlements;
+}
+
+export function getUzbekistanWeekBounds() {
+  const { nowUzt, nowUztMs } = (() => {
+    const ms = Date.now() + UZT_OFFSET_MS;
+    return { nowUzt: new Date(ms), nowUztMs: ms };
+  })();
+
+  const day = nowUzt.getUTCDay();
+  const diffToMonday = (day + 6) % 7;
+
+  const mondayUzt = new Date(nowUztMs);
+  mondayUzt.setUTCDate(nowUzt.getUTCDate() - diffToMonday);
+  mondayUzt.setUTCHours(0, 0, 0, 0);
+
+  const sundayUzt = new Date(mondayUzt.getTime());
+  sundayUzt.setUTCDate(mondayUzt.getUTCDate() + 6);
+  sundayUzt.setUTCHours(23, 59, 59, 999);
+
+  const startEpochSec = Math.floor((mondayUzt.getTime() - UZT_OFFSET_MS) / 1000);
+  const endEpochSec = Math.floor((sundayUzt.getTime() - UZT_OFFSET_MS) / 1000);
+
+  const monLabel = mondayUzt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const sunLabel = sundayUzt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+  return {
+    startEpochSec,
+    endEpochSec,
+    monLabel,
+    sunLabel,
+  };
+}
+
+/**
+ * Returns the effective roster array of usernames/names.
+ * Prefers group.dutyRoster (explicitly set by admin).
+ * Falls back to active group members if no roster is set.
+ */
+export function getDutyRosterList(group, members = []) {
+  if (group?.dutyRoster && Array.isArray(group.dutyRoster) && group.dutyRoster.length > 0) {
+    return group.dutyRoster.map((item) => (typeof item === 'string' ? item : item.name)).filter(Boolean);
+  }
+
+  if (members && members.length > 0) {
+    const sorted = [...members].sort((a, b) => {
+      const orderDiff = (a.dutyOrder || 0) - (b.dutyOrder || 0);
+      if (orderDiff !== 0) return orderDiff;
+      return (a.id || 0) - (b.id || 0);
+    });
+    return sorted.map((m) => m.name);
+  }
+
+  return [];
+}
+
+/**
+ * Returns the person on duty for dayOffset (0 = today, 1 = tomorrow, etc.)
+ */
+export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0) {
+  if (!roster || roster.length === 0) return null;
+  const { dayIndex } = getUztTimeInfo();
+  const k = roster.length;
+  const targetDay = dayIndex + dayOffset;
+  const idx = (((targetDay + (dutyOffset || 0)) % k) + k) % k;
+  return roster[idx];
+}
+
+export function formatMinimalDutyNotification(person) {
+  return `Duty: ${person}`;
+}
+
+export function getDutySchedule(group, members, daysCount = 7) {
+  const roster = getDutyRosterList(group, members);
+  if (!roster || roster.length === 0) return [];
+
+  const k = roster.length;
+  const { dayIndex } = getUztTimeInfo();
+  const dutyOffset = group?.dutyOffset || 0;
+
+  const schedule = [];
+  for (let i = 0; i < daysCount; i++) {
+    const targetDay = dayIndex + i;
+    const memberIdx = (((targetDay + dutyOffset) % k) + k) % k;
+    const dayDateUzt = new Date(targetDay * DAY_MS);
+    const dateLabel = dayDateUzt.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+
+    schedule.push({
+      dayOffset: i,
+      dateLabel,
+      name: roster[memberIdx],
+    });
+  }
+
+  return schedule;
 }

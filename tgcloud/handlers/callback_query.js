@@ -1,6 +1,16 @@
 import { api } from 'sdk';
-import { getExpense, deleteExpense, settleGroup, resetGroup } from '../lib/db-service.js';
+import {
+  getExpense,
+  deleteExpense,
+  settleGroup,
+  resetGroup,
+  getMembers,
+  getGroup,
+  shiftGroupDutyOffset,
+} from '../lib/db-service.js';
+import { getDutySchedule, getDutyRosterList, getDutyPerson } from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
+import { formatDutyMessage } from './message.js';
 
 export default async function (callbackQuery, ctx) {
   if (!callbackQuery) return;
@@ -22,6 +32,81 @@ export default async function (callbackQuery, ctx) {
       chat_id: chatId,
       message_id: messageId,
       text: 'Action canceled.',
+    });
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (data === 'duty_next') {
+    await shiftGroupDutyOffset(chatId, 1);
+    const grp = await getGroup(chatId);
+    const mems = await getMembers(chatId);
+    const roster = getDutyRosterList(grp, mems);
+    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+
+    await api.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Duty: ${person}`,
+      reply_markup:
+        roster.length > 1
+          ? {
+              inline_keyboard: [
+                [
+                  { text: 'Next (Skip)', callback_data: 'duty_next' },
+                  { text: 'Full Schedule', callback_data: 'duty_schedule' },
+                ],
+              ],
+            }
+          : undefined,
+    });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: `Shifted to ${person}` });
+    return;
+  }
+
+  if (data === 'duty_schedule') {
+    const grp = await getGroup(chatId);
+    const mems = await getMembers(chatId);
+    const schedule = getDutySchedule(grp, mems, 7);
+
+    await api.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      text: formatDutyMessage(schedule, grp),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Next (Skip)', callback_data: 'duty_next' },
+            { text: 'Back', callback_data: 'duty_minimal' },
+          ],
+        ],
+      },
+    });
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (data === 'duty_minimal') {
+    const grp = await getGroup(chatId);
+    const mems = await getMembers(chatId);
+    const roster = getDutyRosterList(grp, mems);
+    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+
+    await api.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      text: `Duty: ${person}`,
+      reply_markup:
+        roster.length > 1
+          ? {
+              inline_keyboard: [
+                [
+                  { text: 'Next (Skip)', callback_data: 'duty_next' },
+                  { text: 'Full Schedule', callback_data: 'duty_schedule' },
+                ],
+              ],
+            }
+          : undefined,
     });
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
@@ -55,7 +140,7 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Deleted: Expense deleted.',
+      text: 'Expense deleted.',
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Expense deleted.' });
     return;
@@ -66,7 +151,7 @@ export default async function (callbackQuery, ctx) {
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only group admins can settle the debts.',
+        text: 'Only group admins can settle debts.',
         show_alert: true,
       });
       return;
@@ -76,7 +161,7 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Success: All debts have been marked as settled. The current balance is now 0.',
+      text: 'All debts marked as settled. Current balance is now 0.',
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Settled!' });
     return;
@@ -97,7 +182,7 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Success: All expense records for this group have been deleted.',
+      text: 'All expense records for this group have been deleted.',
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Group reset.' });
     return;

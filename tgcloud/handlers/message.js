@@ -6,11 +6,62 @@ import {
   getExpenses,
   getExpense,
   addMemberByName,
+  removeMemberByName,
   syncChatAdmins,
+  getGroup,
+  shiftGroupDutyOffset,
+  setGroupDutyRoster,
+  setGroupDutyTime,
+  checkAndAnnounceDuty,
 } from '../lib/db-service.js';
-import { calculateBalances, calculateSettlements } from '../lib/settlement.js';
+import {
+  calculateBalances,
+  calculateSettlements,
+  getUzbekistanWeekBounds,
+  getDutySchedule,
+  getDutyRosterList,
+  getDutyPerson,
+  formatMinimalDutyNotification,
+} from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
-import { formatMoney, formatAmount } from '../lib/format.js';
+import { formatMoney, parseExpenseInput } from '../lib/format.js';
+
+function buildMemberNameMap(groupMembers, expensesList = []) {
+  const map = new Map();
+  for (const exp of expensesList) {
+    if (exp.payerId && exp.payerName) {
+      map.set(Number(exp.payerId), exp.payerName);
+    }
+  }
+  for (const m of groupMembers) {
+    map.set(Number(m.telegramId), m.name);
+  }
+  return map;
+}
+
+export function formatDutyMessage(schedule, group) {
+  if (!schedule || schedule.length === 0) {
+    return 'No duty roster set. Admin can set it with: /setduty @user1 @user2';
+  }
+
+  const today = schedule[0];
+  const tomorrow = schedule[1];
+  const dutyTime = group?.dutyTime || '09:00';
+
+  let resp = `Duty: ${today.name}\n`;
+  if (tomorrow) {
+    resp += `Tomorrow: ${tomorrow.name}\n`;
+  }
+  resp += `Time: ${dutyTime} (UZT)\n\n`;
+
+  resp += '7-Day Schedule:\n';
+  for (const item of schedule) {
+    const tag = item.dayOffset === 0 ? ' (Today)' : '';
+    resp += `${item.dateLabel}: ${item.name}${tag}\n`;
+  }
+
+  return resp.trim();
+}
 
 export default async function (message, ctx) {
   if (!message || !message.text) return;
@@ -34,11 +85,10 @@ export default async function (message, ctx) {
       await api.sendMessage({
         chat_id: chatId,
         text:
-          '<b>Group Expense Tracker</b>\n\n' +
-          'This bot is designed to work inside Telegram groups. Add it to your group to track shared expenses with your friends!\n\n' +
-          '<b>How to track expenses in groups:</b>\n' +
-          'Just send: <code>* 10 ming nonga</code> or <code>/add 10 ming nonga</code>',
-        parse_mode: 'HTML',
+          'Group Expense & Duty Tracker\n\n' +
+          'Add this bot to your Telegram group to track shared expenses and daily room cleaning duty.\n\n' +
+          'Example expense:\n' +
+          '* 40 ming nonga',
       });
     }
     return;
@@ -48,75 +98,55 @@ export default async function (message, ctx) {
   await ensureMember(userId, chatId, displayName, message.chat.title || 'Group');
   await syncChatAdmins(api, chatId, message.chat.title || 'Group');
 
-  // 2. Parse expense entry: starts with '*' or '/add'
-  if (text.startsWith('*') || text.startsWith('/add')) {
+  // Passive automatic daily duty check: if time has passed today and not yet announced, send it!
+  const currentGroup = await getGroup(chatId);
+  const currentMembers = await getMembers(chatId);
+  await checkAndAnnounceDuty(api, currentGroup, currentMembers);
+
+  // 2. Parse expense entry: starts with '*' or '/add ' (not '/addmember')
+  const isStarExpense = text.startsWith('*');
+  const isAddCommand = /^\/add(?:@[a-zA-Z0-9_]+)?(?:\s+|$)/i.test(text);
+
+  if (isStarExpense || isAddCommand) {
     let cleanText = text;
-    if (cleanText.startsWith('/add')) {
+    if (isAddCommand) {
       cleanText = cleanText.replace(/^\/add(?:@[a-zA-Z0-9_]+)?\s*/i, '');
-    } else if (cleanText.startsWith('*')) {
+    } else {
       cleanText = cleanText.slice(1);
     }
-    cleanText = cleanText.trim();
 
-    const numberMatch = cleanText.match(/(\d+(?:\.\d+)?)/);
-    if (!numberMatch) {
+    const parsed = parseExpenseInput(cleanText);
+    if (!parsed) {
       return;
     }
 
     try {
-      const amountStr = numberMatch[1];
-      let amount = parseFloat(amountStr);
+      const { amount, currency, description } = parsed;
 
-      let description = cleanText.replace(amountStr, '').trim();
+      await addExpense({
+        groupId: chatId,
+        payerId: userId,
+        payerName: displayName,
+        amount,
+        currency,
+        description,
+        groupName: message.chat.title || 'Group',
+      });
 
-      // Handle "ming", "k", "min" logic
-      if (/\b(?:ming|k|min)\b/i.test(description)) {
-        description = description.replace(/\b(?:ming|k|min)\b/i, '').trim();
-      } else if (amount >= 1000) {
-        amount = amount / 1000.0;
-      }
-
-      description = description.replace(/^[-_\s,]+/, '').trim();
-      if (!description) {
-        description = 'Expense';
-      }
-
-      // Check currency
-      let currency = 'UZS';
-      const currMatch = description.match(/\b(UZS|USD|EUR|RUB)\b/i);
-      if (currMatch) {
-        currency = currMatch[1].toUpperCase();
-        description = description.replace(/\b(UZS|USD|EUR|RUB)\b/i, '').trim();
-      }
-
-      if (amount > 0) {
-        await addExpense({
-          groupId: chatId,
-          payerId: userId,
-          payerName: displayName,
-          amount,
-          currency,
-          description,
-          groupName: message.chat.title || 'Group',
-        });
-
-        // Respond by putting a reaction on the message instead of sending a separate message
-        if (message.message_id) {
-          try {
-            await api.setMessageReaction({
-              chat_id: chatId,
-              message_id: message.message_id,
-              reaction: [{ type: 'emoji', emoji: '👍' }],
-            });
-          } catch (reactErr) {
-            console.warn('Could not set message reaction:', reactErr);
-            // Fallback only if reactions are disabled in the chat
-            await api.sendMessage({
-              chat_id: chatId,
-              text: `✅ Recorded: ${formatAmount(amount)} ${currency} - ${description}`,
-              reply_parameters: { message_id: message.message_id },
-            });
-          }
+      if (message.message_id) {
+        try {
+          await api.setMessageReaction({
+            chat_id: chatId,
+            message_id: message.message_id,
+            reaction: [{ type: 'emoji', emoji: '👍' }],
+          });
+        } catch (reactErr) {
+          console.warn('Could not set message reaction:', reactErr);
+          await api.sendMessage({
+            chat_id: chatId,
+            text: `Recorded: ${formatMoney(amount, currency)} - ${description}`,
+            reply_parameters: { message_id: message.message_id },
+          });
         }
       }
     } catch (err) {
@@ -124,7 +154,7 @@ export default async function (message, ctx) {
       try {
         const errParams = {
           chat_id: chatId,
-          text: `Error parsing expense: ${err.message}`,
+          text: `Error recording expense: ${err.message}`,
         };
         if (message.message_id) {
           errParams.reply_parameters = { message_id: message.message_id };
@@ -144,24 +174,29 @@ export default async function (message, ctx) {
     case '/start':
     case '/help': {
       const helpText =
-        '<b>Group Expense Tracker</b>\n\n' +
-        'Add an expense using <code>*</code>:\n' +
-        '<code>* 10 ming nonga</code>\n' +
-        'Or: <code>/add 10 ming nonga</code>\n\n' +
-        '<b>Commands:</b>\n' +
+        'Group Expense & Duty Tracker\n\n' +
+        'Add an expense with *:\n' +
+        '* 40 ming nonga\n' +
+        '* 2 ta non 10 ming\n\n' +
+        'Commands:\n' +
         '/balance - Who owes whom\n' +
+        '/duty - Who is on duty today\n' +
+        '/duty schedule - 7-day duty plan\n' +
+        '/duty next - Shift duty to next person\n' +
+        '/setduty @user1 @user2 - Set duty roster (Admin)\n' +
+        '/setdutytime 09:00 - Set daily notice time (Admin)\n' +
         '/expenses - Recent history\n' +
-        '/weekly - Weekly report\n' +
-        '/report - Full report\n' +
-        '/settle - Mark debts as settled (Admins)\n' +
+        '/weekly - Weekly summary\n' +
+        '/detail - Full report\n' +
         '/members - Participants\n' +
-        '/addmember - Add a friend (e.g. /addmember @user)\n\n' +
-        '<i>No servers required. Running directly on Telegram Serverless.</i>';
+        '/addmember @user - Add roommate\n' +
+        '/removemember @user - Remove roommate\n' +
+        '/settle - Settle debts to 0 (Admins)\n' +
+        '/delete <ID> - Delete an expense';
 
       await api.sendMessage({
         chat_id: chatId,
         text: helpText,
-        parse_mode: 'HTML',
       });
       break;
     }
@@ -180,20 +215,19 @@ export default async function (message, ctx) {
       if (!allMembers || allMembers.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'No active participants found yet. Use /join or add an expense!',
+          text: 'No participants found yet. Use /join or /addmember @user.',
         });
         return;
       }
 
-      let resp = '<b>Active Participants:</b>\n\n';
+      let resp = 'Participants:\n\n';
       allMembers.forEach((m, idx) => {
         resp += `${idx + 1}. ${m.name}\n`;
       });
 
       await api.sendMessage({
         chat_id: chatId,
-        text: resp,
-        parse_mode: 'HTML',
+        text: resp.trim(),
       });
       break;
     }
@@ -203,8 +237,7 @@ export default async function (message, ctx) {
       if (parts.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'Please specify the username or name to add. Example: <code>/addmember @username</code>',
-          parse_mode: 'HTML',
+          text: 'Usage: /addmember @username',
         });
         return;
       }
@@ -219,7 +252,193 @@ export default async function (message, ctx) {
 
       await api.sendMessage({
         chat_id: chatId,
-        text: `Added ${added.join(', ')} to group participants.`,
+        text: `Added: ${added.join(', ')}`,
+      });
+      break;
+    }
+
+    case '/removemember': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can remove members.',
+        });
+        return;
+      }
+
+      const targetName = text.split(/\s+/)[1];
+      if (!targetName) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Usage: /removemember @username',
+        });
+        return;
+      }
+
+      const removed = await removeMemberByName(chatId, targetName);
+      if (!removed) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Member "${targetName}" not found.`,
+        });
+        return;
+      }
+
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `Removed ${removed} from participants.`,
+      });
+      break;
+    }
+
+    case '/setduty': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can set the duty roster.',
+        });
+        return;
+      }
+
+      const parts = text.split(/\s+/).slice(1).map((p) => p.replace(/,/g, '').trim()).filter(Boolean);
+      if (parts.length === 0) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Usage: /setduty @user1 @user2 @user3',
+        });
+        return;
+      }
+
+      await setGroupDutyRoster(chatId, parts);
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `Duty roster set: ${parts.join(', ')}`,
+      });
+      break;
+    }
+
+    case '/setdutytime': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can set the duty notification time.',
+        });
+        return;
+      }
+
+      const timeArg = text.split(/\s+/)[1];
+      if (!timeArg || !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeArg)) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Usage: /setdutytime 09:00 (24-hour format in UZT)',
+        });
+        return;
+      }
+
+      await setGroupDutyTime(chatId, timeArg);
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `Duty notice time set to ${timeArg} (UZT)`,
+      });
+      break;
+    }
+
+    case '/duty':
+    case '/clean':
+    case '/navbat': {
+      const args = text.split(/\s+/).slice(1);
+      const sub = (args[0] || '').toLowerCase();
+
+      if (sub === 'set') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can set the duty roster.' });
+          return;
+        }
+        const roster = args.slice(1).map((p) => p.replace(/,/g, '').trim()).filter(Boolean);
+        if (roster.length === 0) {
+          await api.sendMessage({ chat_id: chatId, text: 'Usage: /duty set @user1 @user2 @user3' });
+          return;
+        }
+        await setGroupDutyRoster(chatId, roster);
+        await api.sendMessage({ chat_id: chatId, text: `Duty roster set: ${roster.join(', ')}` });
+        return;
+      }
+
+      if (sub === 'time') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can set the duty time.' });
+          return;
+        }
+        const timeArg = args[1];
+        if (!timeArg || !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeArg)) {
+          await api.sendMessage({ chat_id: chatId, text: 'Usage: /duty time 09:00' });
+          return;
+        }
+        await setGroupDutyTime(chatId, timeArg);
+        await api.sendMessage({ chat_id: chatId, text: `Duty notice time set to ${timeArg} (UZT)` });
+        return;
+      }
+
+      if (sub === 'next' || sub === 'skip') {
+        await shiftGroupDutyOffset(chatId, 1);
+      }
+
+      if (sub === 'announce' || sub === 'now') {
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        await checkAndAnnounceDuty(api, grp, mems, true);
+        return;
+      }
+
+      const grp = await getGroup(chatId);
+      const mems = await getMembers(chatId);
+      const roster = getDutyRosterList(grp, mems);
+
+      if (!roster || roster.length === 0) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'No duty roster set. Admin can set it with: /setduty @user1 @user2',
+        });
+        return;
+      }
+
+      const todayPerson = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+
+      if (sub === 'schedule' || sub === 'list') {
+        const schedule = getDutySchedule(grp, mems, 7);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: formatDutyMessage(schedule, grp),
+          reply_markup:
+            roster.length > 1
+              ? {
+                  inline_keyboard: [[{ text: 'Next Person (Skip)', callback_data: 'duty_next' }]],
+                }
+              : undefined,
+        });
+        return;
+      }
+
+      // Minimal response
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `Duty: ${todayPerson}`,
+        reply_markup:
+          roster.length > 1
+            ? {
+                inline_keyboard: [
+                  [
+                    { text: 'Next (Skip)', callback_data: 'duty_next' },
+                    { text: 'Full Schedule', callback_data: 'duty_schedule' },
+                  ],
+                ],
+              }
+            : undefined,
       });
       break;
     }
@@ -231,52 +450,55 @@ export default async function (message, ctx) {
       if (!groupExpenses || groupExpenses.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'There are no active expenses recorded for this group yet.',
+          text: 'No active expenses recorded yet.',
         });
         return;
       }
 
       if (groupMembers.length <= 1) {
-        const onlyMember = groupMembers[0]?.name || 'You';
+        const onlyMember = groupMembers[0]?.name || displayName;
+        const total = groupExpenses.reduce((s, e) => s + e.amount, 0);
         await api.sendMessage({
           chat_id: chatId,
           text:
-            `<b>Current Balance</b>\n\n` +
-            `UZS Balance\n${onlyMember}: 0 ming\n\n` +
-            `ℹ️ <i>Notice: Only 1 person (${onlyMember}) is registered in this group so far.</i>\n` +
-            `Expenses are split equally among all registered participants.\n\n` +
-            `👉 <b>To add your friends to split the expense:</b>\n` +
-            `• Type: <code>/addmember @username</code>\n` +
-            `• Or have them send any message or type <code>/join</code> in this group!`,
-          parse_mode: 'HTML',
+            `Current Balance\n\n` +
+            `${onlyMember} paid: ${formatMoney(total, 'UZS')}\n` +
+            `Balance: 0 ming (only 1 participant registered)\n\n` +
+            `Add your roommates so expenses split among everyone:\n` +
+            `/addmember @username`,
         });
         return;
       }
 
       const balancesByCurrency = calculateBalances(groupMembers, groupExpenses);
-      const memberMap = new Map(groupMembers.map((m) => [m.telegramId, m.name]));
+      const memberMap = buildMemberNameMap(groupMembers, groupExpenses);
 
       let resp = 'Current Balance\n\n';
       for (const [cur, balances] of Object.entries(balancesByCurrency)) {
-        resp += `${cur} Balance\n`;
+        const curExpenses = groupExpenses.filter((e) => (e.currency || 'UZS').toUpperCase() === cur);
+        const totalSpent = curExpenses.reduce((s, e) => s + e.amount, 0);
+        const numPeople = Object.keys(balances).length;
+        const fairShare = numPeople > 0 ? totalSpent / numPeople : 0;
+
+        resp += `${cur} (Total: ${formatMoney(totalSpent, cur)} | Share: ${formatMoney(fairShare, cur)})\n`;
         const sorted = Object.entries(balances).sort((a, b) => b[1] - a[1]);
         for (const [mid, bal] of sorted) {
           const name = memberMap.get(Number(mid)) || 'Unknown';
           const sign = bal > 0 ? '+' : '';
-          if (Math.abs(bal) > 0.01) {
-            resp += `${name}: ${sign}${formatMoney(bal)}\n`;
+          if (Math.abs(bal) > 0.05) {
+            resp += `${name}: ${sign}${formatMoney(bal, cur)}\n`;
           } else {
-            resp += `${name}: 0 ming\n`;
+            resp += `${name}: 0\n`;
           }
         }
 
-        resp += '\nSettlements\n';
+        resp += '\nWho Owes Whom:\n';
         const settlements = calculateSettlements(balances);
         if (settlements.length > 0) {
           for (const s of settlements) {
             const debtor = memberMap.get(s.debtorId) || 'Unknown';
             const creditor = memberMap.get(s.creditorId) || 'Unknown';
-            resp += `${debtor} owes ${creditor}: ${formatMoney(s.amount)}\n`;
+            resp += `${debtor} -> ${creditor}: ${formatMoney(s.amount, cur)}\n`;
           }
         } else {
           resp += 'All settled up!\n';
@@ -295,74 +517,81 @@ export default async function (message, ctx) {
     case '/details':
     case '/report': {
       const groupMembers = await getMembers(chatId);
-      const groupExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
+      const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
 
-      if (!groupExpenses || groupExpenses.length === 0) {
+      if (!allExpenses || allExpenses.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'There are no expenses recorded for this group yet.',
+          text: 'No expenses recorded for this group yet.',
         });
         return;
       }
 
-      const memberMap = new Map(groupMembers.map((m) => [m.telegramId, m.name]));
-      const numMembers = groupMembers.length;
+      const unsettledExpenses = allExpenses.filter((e) => e.settled === 0);
+      const activeList = unsettledExpenses.length > 0 ? unsettledExpenses : allExpenses;
+      const isShowingSettled = unsettledExpenses.length === 0;
+
+      const memberMap = buildMemberNameMap(groupMembers, allExpenses);
 
       const byCurrency = {};
-      for (const exp of groupExpenses) {
-        const c = exp.currency || 'UZS';
+      for (const exp of activeList) {
+        const c = (exp.currency || 'UZS').toUpperCase();
         if (!byCurrency[c]) byCurrency[c] = [];
         byCurrency[c].push(exp);
       }
 
-      let resp = 'Group Expense Report\nPeriod: All time\n\n';
+      let resp = isShowingSettled
+        ? 'Group Expense Report (All Settled History)\n\n'
+        : 'Group Expense Report (Current Unsettled Cycle)\n\n';
+
+      const balancesByCur = calculateBalances(groupMembers, activeList);
+
       for (const [cur, curExpenses] of Object.entries(byCurrency)) {
+        const balances = balancesByCur[cur] || {};
+        const participantIds = Object.keys(balances).map(Number);
+        const numPeople = participantIds.length || groupMembers.length || 1;
         const totalSpent = curExpenses.reduce((sum, e) => sum + e.amount, 0);
-        const fairShare = numMembers > 0 ? totalSpent / numMembers : 0;
+        const fairShare = totalSpent / numPeople;
 
         const spending = {};
-        for (const m of groupMembers) spending[m.telegramId] = 0;
+        for (const pid of participantIds) spending[pid] = 0;
         for (const e of curExpenses) {
-          spending[e.payerId] = (spending[e.payerId] || 0) + e.amount;
+          const pid = Number(e.payerId);
+          spending[pid] = (spending[pid] || 0) + e.amount;
         }
 
         resp += `Currency: ${cur}\n`;
-        resp += `Total spent: ${formatMoney(totalSpent)}\n`;
-        resp += `Number of expenses: ${curExpenses.length}\n\n`;
+        resp += `Total spent: ${formatMoney(totalSpent, cur)} (${curExpenses.length} items)\n`;
+        resp += `Fair share: ${formatMoney(fairShare, cur)} per person\n\n`;
 
+        resp += 'Paid by each member:\n';
         const sortedSpending = Object.entries(spending).sort((a, b) => b[1] - a[1]);
         for (const [mid, amt] of sortedSpending) {
-          if (amt > 0) {
-            const name = memberMap.get(Number(mid)) || 'Unknown';
-            resp += `${name} paid: ${formatMoney(amt)}\n`;
-          }
-        }
-        resp += `\nFair share per person: ${formatMoney(fairShare)}\n\n`;
-      }
-
-      // Balances
-      const unsettled = groupExpenses.filter((e) => e.settled === 0);
-      const balancesByCur = calculateBalances(groupMembers, unsettled);
-      resp += 'Balances & Settlements:\n\n';
-
-      for (const [cur, balances] of Object.entries(balancesByCur)) {
-        resp += `${cur}\n`;
-        const sorted = Object.entries(balances).sort((a, b) => b[1] - a[1]);
-        for (const [mid, bal] of sorted) {
           const name = memberMap.get(Number(mid)) || 'Unknown';
-          const sign = bal > 0 ? '+' : '';
-          if (Math.abs(bal) > 0.01) {
-            resp += `${name}: ${sign}${formatMoney(bal)}\n`;
-          }
+          resp += `${name}: ${formatMoney(amt, cur)}\n`;
         }
 
-        const settlements = calculateSettlements(balances);
-        if (settlements.length > 0) {
-          resp += '\nSettlements:\n';
-          for (const s of settlements) {
-            const debtor = memberMap.get(s.debtorId) || 'Unknown';
-            const creditor = memberMap.get(s.creditorId) || 'Unknown';
-            resp += `${debtor} owes ${creditor}: ${formatMoney(s.amount)}\n`;
+        if (!isShowingSettled) {
+          resp += '\nNet Balance:\n';
+          const sortedBal = Object.entries(balances).sort((a, b) => b[1] - a[1]);
+          for (const [mid, bal] of sortedBal) {
+            const name = memberMap.get(Number(mid)) || 'Unknown';
+            const sign = bal > 0 ? '+' : '';
+            if (Math.abs(bal) > 0.05) {
+              resp += `${name}: ${sign}${formatMoney(bal, cur)}\n`;
+            } else {
+              resp += `${name}: 0\n`;
+            }
+          }
+
+          const settlements = calculateSettlements(balances);
+          if (settlements.length > 0) {
+            resp += '\nSettlements:\n';
+            for (const s of settlements) {
+              const debtor = memberMap.get(s.debtorId) || 'Unknown';
+              const creditor = memberMap.get(s.creditorId) || 'Unknown';
+              resp += `${debtor} -> ${creditor}: ${formatMoney(s.amount, cur)}\n`;
+            }
           }
         }
         resp += '\n';
@@ -376,53 +605,43 @@ export default async function (message, ctx) {
     }
 
     case '/weekly': {
-      const now = new Date();
-      const day = now.getUTCDay();
-      const diffToMonday = (day + 6) % 7;
-      const monday = new Date(now);
-      monday.setUTCDate(now.getUTCDate() - diffToMonday);
-      monday.setUTCHours(0, 0, 0, 0);
-
-      const sunday = new Date(monday);
-      sunday.setUTCDate(monday.getUTCDate() + 6);
-      sunday.setUTCHours(23, 59, 59, 999);
+      const { startEpochSec, endEpochSec, monLabel, sunLabel } = getUzbekistanWeekBounds();
 
       const weekExpenses = await getExpenses(chatId, {
         limit: 10000,
-        includeSettled: false,
-        startDate: monday,
-        endDate: sunday,
+        includeSettled: true,
+        startDate: startEpochSec,
+        endDate: endEpochSec,
       });
 
       if (!weekExpenses || weekExpenses.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'There are no expenses recorded for this week yet.',
+          text: `No expenses recorded for this week (${monLabel} - ${sunLabel}).`,
         });
         return;
       }
 
       const groupMembers = await getMembers(chatId);
-      const memberMap = new Map(groupMembers.map((m) => [m.telegramId, m.name]));
-      const balancesByCur = calculateBalances(groupMembers, weekExpenses);
+      const memberMap = buildMemberNameMap(groupMembers, weekExpenses);
+      const unsettledWeek = weekExpenses.filter((e) => e.settled === 0);
+      const balancesByCur = calculateBalances(groupMembers, unsettledWeek);
 
-      const monStr = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const sunStr = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      let resp = `Weekly Report\n${monStr} to ${sunStr}\n\n`;
+      let resp = `Weekly Report (${monLabel} - ${sunLabel})\n\n`;
 
       const byCur = {};
       for (const e of weekExpenses) {
-        const c = e.currency || 'UZS';
+        const c = (e.currency || 'UZS').toUpperCase();
         if (!byCur[c]) byCur[c] = [];
         byCur[c].push(e);
       }
 
       for (const [cur, exps] of Object.entries(byCur)) {
         const total = exps.reduce((s, e) => s + e.amount, 0);
-        resp += `${cur}\nTotal: ${formatMoney(total)}\n\n`;
+        resp += `${cur} Total Spent: ${formatMoney(total, cur)}\n`;
 
         const spending = {};
+        for (const m of groupMembers) spending[m.telegramId] = 0;
         for (const e of exps) {
           spending[e.payerId] = (spending[e.payerId] || 0) + e.amount;
         }
@@ -431,29 +650,25 @@ export default async function (message, ctx) {
         for (const [mid, amt] of sortedSpending) {
           if (amt > 0) {
             const name = memberMap.get(Number(mid)) || 'Unknown';
-            resp += `${name}: ${formatMoney(amt)}\n`;
+            resp += `${name} paid: ${formatMoney(amt, cur)}\n`;
           }
         }
 
-        resp += '\nBalances:\n';
-        const balances = balancesByCur[cur] || {};
-        const sortedBal = Object.entries(balances).sort((a, b) => b[1] - a[1]);
-        for (const [mid, bal] of sortedBal) {
-          const name = memberMap.get(Number(mid)) || 'Unknown';
-          const sign = bal > 0 ? '+' : '';
-          if (Math.abs(bal) > 0.01) {
-            resp += `${name}: ${sign}${formatMoney(bal)}\n`;
+        const balances = balancesByCur[cur];
+        if (balances) {
+          const settlements = calculateSettlements(balances);
+          if (settlements.length > 0) {
+            resp += '\nUnsettled This Week:\n';
+            for (const s of settlements) {
+              const debtor = memberMap.get(s.debtorId) || 'Unknown';
+              const creditor = memberMap.get(s.creditorId) || 'Unknown';
+              resp += `${debtor} -> ${creditor}: ${formatMoney(s.amount, cur)}\n`;
+            }
+          } else {
+            resp += '\nAll settled for this week!\n';
           }
-        }
-
-        const settlements = calculateSettlements(balances);
-        if (settlements.length > 0) {
-          resp += '\nSettlement:\n';
-          for (const s of settlements) {
-            const debtor = memberMap.get(s.debtorId) || 'Unknown';
-            const creditor = memberMap.get(s.creditorId) || 'Unknown';
-            resp += `${debtor} owes ${creditor}: ${formatMoney(s.amount)}\n`;
-          }
+        } else {
+          resp += '\nAll settled for this week!\n';
         }
         resp += '\n';
       }
@@ -466,24 +681,26 @@ export default async function (message, ctx) {
     }
 
     case '/expenses': {
-      const recent = await getExpenses(chatId, { limit: 20 });
-      if (!recent || recent.length === 0) {
+      const recent = await getExpenses(chatId, { limit: 20, includeSettled: false });
+      const listToShow = recent.length > 0 ? recent : await getExpenses(chatId, { limit: 20, includeSettled: true });
+
+      if (!listToShow || listToShow.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'There are no expenses recorded for this group yet.',
+          text: 'No expenses recorded yet.',
         });
         return;
       }
 
       const allMembers = await getMembers(chatId);
-      const memberMap = new Map(allMembers.map((m) => [m.telegramId, m.name]));
+      const memberMap = buildMemberNameMap(allMembers, listToShow);
 
-      let resp = 'Recent Expenses\n\n';
-      recent.forEach((exp, idx) => {
-        const name = memberMap.get(exp.payerId) || exp.payerName;
-        resp += `${idx + 1}. ${name}: ${formatMoney(exp.amount)} for ${exp.description} (ID: ${exp.id})\n`;
+      let resp = recent.length > 0 ? 'Recent Active Expenses:\n\n' : 'Recent Settled Expenses:\n\n';
+      listToShow.forEach((exp, idx) => {
+        const name = memberMap.get(Number(exp.payerId)) || exp.payerName;
+        resp += `${idx + 1}. ${name}: ${formatMoney(exp.amount, exp.currency)} - ${exp.description} (ID: ${exp.id})\n`;
       });
-      resp += '\nTo delete an expense, use /delete <ID>';
+      resp += '\nDelete an entry: /delete <ID>';
 
       await api.sendMessage({
         chat_id: chatId,
@@ -497,7 +714,7 @@ export default async function (message, ctx) {
       if (args.length < 2) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'Please provide the expense ID. Example: /delete 123',
+          text: 'Usage: /delete <ID> (find the ID via /expenses)',
         });
         return;
       }
@@ -518,7 +735,7 @@ export default async function (message, ctx) {
       if (expense.payerId !== userId && !isAdmin) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'You are not authorized to delete this expense.',
+          text: 'You can only delete your own expenses (or ask an admin).',
         });
         return;
       }
@@ -526,8 +743,8 @@ export default async function (message, ctx) {
       await api.sendMessage({
         chat_id: chatId,
         text:
-          `Are you sure you want to delete this expense?\n` +
-          `${expense.payerName} - ${expense.amount} ${expense.currency} - ${expense.description}`,
+          `Delete this expense?\n` +
+          `${expense.payerName}: ${formatMoney(expense.amount, expense.currency)} - ${expense.description}`,
         reply_markup: {
           inline_keyboard: [
             [
@@ -552,9 +769,7 @@ export default async function (message, ctx) {
 
       await api.sendMessage({
         chat_id: chatId,
-        text:
-          'Are you sure you want to mark all current expenses as SETTLED?\n\n' +
-          'This will reset everyone`s current balance back to zero, but keep the history of expenses for reports.',
+        text: 'Mark all current expenses as settled and reset balances to 0?',
         reply_markup: {
           inline_keyboard: [
             [
@@ -579,7 +794,7 @@ export default async function (message, ctx) {
 
       await api.sendMessage({
         chat_id: chatId,
-        text: 'Warning: This will permanently delete all expense records for this group.',
+        text: 'Warning: Permanently delete all expense records for this group?',
         reply_markup: {
           inline_keyboard: [
             [
