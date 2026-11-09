@@ -42,22 +42,22 @@ function buildMemberNameMap(groupMembers, expensesList = []) {
 
 export function formatDutyMessage(schedule, group) {
   if (!schedule || schedule.length === 0) {
-    return 'No duty roster set.';
+    return "Navbatchi ro'yxati belgilanmagan.";
   }
 
   const today = schedule[0];
   const tomorrow = schedule[1];
   const dutyTime = group?.dutyTime || '09:00';
 
-  let resp = `Duty: ${today.name}${today.isDone ? ' (Done)' : ''}\n`;
+  let resp = `Navbatchi: ${today.name}${today.isDone ? ' (Done)' : ''}\n`;
   if (tomorrow) {
-    resp += `Tomorrow: ${tomorrow.name}\n`;
+    resp += `Ertaga: ${tomorrow.name}\n`;
   }
-  resp += `Time: ${dutyTime} (UZT)\n\n`;
+  resp += `Vaqt: ${dutyTime} (UZT)\n\n`;
 
-  resp += '7-Day Schedule:\n';
+  resp += "7 kunlik ro'yxat:\n";
   for (const item of schedule) {
-    const tag = item.dayOffset === 0 ? (item.isDone ? ' (Today, Done)' : ' (Today)') : '';
+    const tag = item.dayOffset === 0 ? (item.isDone ? ' (Bugun, Done)' : ' (Bugun)') : '';
     resp += `${item.dateLabel}: ${item.name}${tag}\n`;
   }
 
@@ -86,9 +86,9 @@ export default async function (message, ctx) {
       await api.sendMessage({
         chat_id: chatId,
         text:
-          'Expense & Duty Tracker\n\n' +
-          'Add to your group to track expenses and room cleaning duty.\n\n' +
-          'Example expense:\n' +
+          'Expense & Navbatchi Tracker\n\n' +
+          "Xarajatlarni va xona tozalash navbatchiligini boshqarish uchun guruhga qo'shing.\n\n" +
+          'Misol:\n' +
           '* 40 ming nonga',
       });
     }
@@ -175,24 +175,24 @@ export default async function (message, ctx) {
     case '/start':
     case '/help': {
       const helpText =
-        'Expense & Duty Tracker\n\n' +
-        'Add expense:\n' +
+        'Expense & Navbatchi Tracker\n\n' +
+        'Xarajat kiritish:\n' +
         '* 40 ming nonga\n' +
         '* 2 ta non 10 ming\n\n' +
-        'Commands:\n' +
-        '/balance - Balances\n' +
-        '/duty - Who is on duty today\n' +
-        '/expenses - Recent history\n' +
-        '/weekly - Weekly summary\n' +
-        '/detail - Full report\n\n' +
-        'Admin commands:\n' +
-        '/setduty @u1 @u2 - Set duty roster\n' +
-        '/setdutytime 09:00 - Set duty time\n' +
-        '/duty next - Shift to next person\n' +
-        '/addmember @user - Add roommate\n' +
-        '/removemember @user - Remove roommate\n' +
-        '/settle - Settle debts\n' +
-        '/delete <ID> - Delete expense';
+        'Buyruqlar:\n' +
+        '/balance - Hisob-kitob (balans)\n' +
+        '/duty - Navbatchi kimligini ko\'rish\n' +
+        '/expenses - Yaqindagi xarajatlar\n' +
+        '/weekly - Haftalik hisobot\n' +
+        '/detail - To\'liq hisobot\n\n' +
+        'Admin buyruqlari:\n' +
+        '/setduty @u1 @u2 - Navbatchilarni kiritish\n' +
+        '/setdutytime 09:00 - Eslatma vaqtini sozlash\n' +
+        '/duty next - Keyingi kishiga o\'tkazish\n' +
+        '/addmember @user - A\'zo qo\'shish\n' +
+        '/removemember @user - A\'zoni o\'chirish\n' +
+        '/settle - Qarzlarni nollash\n' +
+        '/delete <ID> - Xarajatni o\'chirish';
 
       await api.sendMessage({
         chat_id: chatId,
@@ -323,7 +323,7 @@ export default async function (message, ctx) {
       await setGroupDutyRoster(chatId, parts);
       await api.sendMessage({
         chat_id: chatId,
-        text: `Duty roster set: ${parts.join(', ')}`,
+        text: `Navbatchi ro'yxati: ${parts.join(', ')}`,
       });
       break;
     }
@@ -356,6 +356,7 @@ export default async function (message, ctx) {
     }
 
     case '/duty':
+    case '/navbatchi':
     case '/clean':
     case '/navbat': {
       const args = text.split(/\s+/).slice(1);
@@ -373,7 +374,7 @@ export default async function (message, ctx) {
           return;
         }
         await setGroupDutyRoster(chatId, roster);
-        await api.sendMessage({ chat_id: chatId, text: `Duty roster set: ${roster.join(', ')}` });
+        await api.sendMessage({ chat_id: chatId, text: `Navbatchi ro'yxati: ${roster.join(', ')}` });
         return;
       }
 
@@ -421,7 +422,7 @@ export default async function (message, ctx) {
       if (!roster || roster.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'No duty roster set. Admin can set it with: /setduty @user1 @user2',
+          text: "Navbatchi ro'yxati belgilanmagan. Admin: /setduty @user1 @user2",
         });
         return;
       }

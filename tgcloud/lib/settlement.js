@@ -170,7 +170,7 @@ export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0) {
 }
 
 export function formatMinimalDutyNotification(person, isDone = false) {
-  return isDone ? `Duty: ${person} (Done)` : `Duty: ${person}`;
+  return isDone ? `Navbatchi: ${person} (Done)` : `Navbatchi: ${person}`;
 }
 
 export function getDutySchedule(group, members, daysCount = 7) {
