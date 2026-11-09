@@ -49,6 +49,10 @@ export async function setGroupLastDutyDate(groupId, dateStr) {
   await db.update(groups).set({ lastDutyDate: dateStr }).where(eq(groups.id, groupId)).run();
 }
 
+export async function setGroupLastDutyDoneDate(groupId, dateStr) {
+  await db.update(groups).set({ lastDutyDoneDate: dateStr }).where(eq(groups.id, groupId)).run();
+}
+
 export async function shiftGroupDutyOffset(groupId, delta = 1) {
   const grp = await getGroup(groupId);
   const current = grp?.dutyOffset || 0;
@@ -69,10 +73,17 @@ export async function checkAndAnnounceDuty(api, group, members, force = false) {
     const person = getDutyPerson(roster, group.dutyOffset || 0, 0);
     if (person) {
       try {
-        await api.sendMessage({
+        const isDone = group.lastDutyDoneDate === dateStr;
+        const msgParams = {
           chat_id: group.id,
-          text: formatMinimalDutyNotification(person),
-        });
+          text: formatMinimalDutyNotification(person, isDone),
+        };
+        if (!isDone) {
+          msgParams.reply_markup = {
+            inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
+          };
+        }
+        await api.sendMessage(msgParams);
         await setGroupLastDutyDate(group.id, dateStr);
         return true;
       } catch (err) {

@@ -7,10 +7,15 @@ import {
   getMembers,
   getGroup,
   shiftGroupDutyOffset,
+  setGroupLastDutyDoneDate,
 } from '../lib/db-service.js';
-import { getDutySchedule, getDutyRosterList, getDutyPerson } from '../lib/settlement.js';
+import {
+  getDutyRosterList,
+  getDutyPerson,
+  formatMinimalDutyNotification,
+  getUztTimeInfo,
+} from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
-import { formatDutyMessage } from './message.js';
 
 export default async function (callbackQuery, ctx) {
   if (!callbackQuery) return;
@@ -37,7 +42,50 @@ export default async function (callbackQuery, ctx) {
     return;
   }
 
+  // Admin confirmation of duty
+  if (data === 'duty_confirm') {
+    const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+    if (!isAdmin) {
+      await api.answerCallbackQuery({
+        callback_query_id: cbId,
+        text: 'Only admin can confirm duty.',
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { dateStr } = getUztTimeInfo();
+    await setGroupLastDutyDoneDate(chatId, dateStr);
+
+    const grp = await getGroup(chatId);
+    const mems = await getMembers(chatId);
+    const roster = getDutyRosterList(grp, mems);
+    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+
+    await api.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      text: formatMinimalDutyNotification(person, true),
+    });
+    await api.answerCallbackQuery({
+      callback_query_id: cbId,
+      text: 'Confirmed done.',
+    });
+    return;
+  }
+
+  // Admin skipping/shifting duty
   if (data === 'duty_next') {
+    const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+    if (!isAdmin) {
+      await api.answerCallbackQuery({
+        callback_query_id: cbId,
+        text: 'Only admin can change duty.',
+        show_alert: true,
+      });
+      return;
+    }
+
     await shiftGroupDutyOffset(chatId, 1);
     const grp = await getGroup(chatId);
     const mems = await getMembers(chatId);
@@ -47,68 +95,12 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: `Duty: ${person}`,
-      reply_markup:
-        roster.length > 1
-          ? {
-              inline_keyboard: [
-                [
-                  { text: 'Next (Skip)', callback_data: 'duty_next' },
-                  { text: 'Full Schedule', callback_data: 'duty_schedule' },
-                ],
-              ],
-            }
-          : undefined,
-    });
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: `Shifted to ${person}` });
-    return;
-  }
-
-  if (data === 'duty_schedule') {
-    const grp = await getGroup(chatId);
-    const mems = await getMembers(chatId);
-    const schedule = getDutySchedule(grp, mems, 7);
-
-    await api.editMessageText({
-      chat_id: chatId,
-      message_id: messageId,
-      text: formatDutyMessage(schedule, grp),
+      text: formatMinimalDutyNotification(person, false),
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: 'Next (Skip)', callback_data: 'duty_next' },
-            { text: 'Back', callback_data: 'duty_minimal' },
-          ],
-        ],
+        inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
       },
     });
-    await api.answerCallbackQuery({ callback_query_id: cbId });
-    return;
-  }
-
-  if (data === 'duty_minimal') {
-    const grp = await getGroup(chatId);
-    const mems = await getMembers(chatId);
-    const roster = getDutyRosterList(grp, mems);
-    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
-
-    await api.editMessageText({
-      chat_id: chatId,
-      message_id: messageId,
-      text: `Duty: ${person}`,
-      reply_markup:
-        roster.length > 1
-          ? {
-              inline_keyboard: [
-                [
-                  { text: 'Next (Skip)', callback_data: 'duty_next' },
-                  { text: 'Full Schedule', callback_data: 'duty_schedule' },
-                ],
-              ],
-            }
-          : undefined,
-    });
-    await api.answerCallbackQuery({ callback_query_id: cbId });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: `Shifted to ${person}` });
     return;
   }
 

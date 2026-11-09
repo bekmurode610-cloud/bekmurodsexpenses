@@ -7,6 +7,7 @@ export const groups = table('groups', {
   dutyTime: text('duty_time').default('09:00'),
   dutyRoster: json('duty_roster'),
   lastDutyDate: text('last_duty_date'),
+  lastDutyDoneDate: text('last_duty_done_date'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 });
 

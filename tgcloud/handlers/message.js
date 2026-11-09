@@ -22,6 +22,7 @@ import {
   getDutyRosterList,
   getDutyPerson,
   formatMinimalDutyNotification,
+  getUztTimeInfo,
 } from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
 import { formatMoney, parseExpenseInput } from '../lib/format.js';
@@ -41,14 +42,14 @@ function buildMemberNameMap(groupMembers, expensesList = []) {
 
 export function formatDutyMessage(schedule, group) {
   if (!schedule || schedule.length === 0) {
-    return 'No duty roster set. Admin can set it with: /setduty @user1 @user2';
+    return 'No duty roster set.';
   }
 
   const today = schedule[0];
   const tomorrow = schedule[1];
   const dutyTime = group?.dutyTime || '09:00';
 
-  let resp = `Duty: ${today.name}\n`;
+  let resp = `Duty: ${today.name}${today.isDone ? ' (Done)' : ''}\n`;
   if (tomorrow) {
     resp += `Tomorrow: ${tomorrow.name}\n`;
   }
@@ -56,7 +57,7 @@ export function formatDutyMessage(schedule, group) {
 
   resp += '7-Day Schedule:\n';
   for (const item of schedule) {
-    const tag = item.dayOffset === 0 ? ' (Today)' : '';
+    const tag = item.dayOffset === 0 ? (item.isDone ? ' (Today, Done)' : ' (Today)') : '';
     resp += `${item.dateLabel}: ${item.name}${tag}\n`;
   }
 
@@ -85,8 +86,8 @@ export default async function (message, ctx) {
       await api.sendMessage({
         chat_id: chatId,
         text:
-          'Group Expense & Duty Tracker\n\n' +
-          'Add this bot to your Telegram group to track shared expenses and daily room cleaning duty.\n\n' +
+          'Expense & Duty Tracker\n\n' +
+          'Add to your group to track expenses and room cleaning duty.\n\n' +
           'Example expense:\n' +
           '* 40 ming nonga',
       });
@@ -174,25 +175,24 @@ export default async function (message, ctx) {
     case '/start':
     case '/help': {
       const helpText =
-        'Group Expense & Duty Tracker\n\n' +
-        'Add an expense with *:\n' +
+        'Expense & Duty Tracker\n\n' +
+        'Add expense:\n' +
         '* 40 ming nonga\n' +
         '* 2 ta non 10 ming\n\n' +
         'Commands:\n' +
-        '/balance - Who owes whom\n' +
+        '/balance - Balances\n' +
         '/duty - Who is on duty today\n' +
-        '/duty schedule - 7-day duty plan\n' +
-        '/duty next - Shift duty to next person\n' +
-        '/setduty @user1 @user2 - Set duty roster (Admin)\n' +
-        '/setdutytime 09:00 - Set daily notice time (Admin)\n' +
         '/expenses - Recent history\n' +
         '/weekly - Weekly summary\n' +
-        '/detail - Full report\n' +
-        '/members - Participants\n' +
+        '/detail - Full report\n\n' +
+        'Admin commands:\n' +
+        '/setduty @u1 @u2 - Set duty roster\n' +
+        '/setdutytime 09:00 - Set duty time\n' +
+        '/duty next - Shift to next person\n' +
         '/addmember @user - Add roommate\n' +
         '/removemember @user - Remove roommate\n' +
-        '/settle - Settle debts to 0 (Admins)\n' +
-        '/delete <ID> - Delete an expense';
+        '/settle - Settle debts\n' +
+        '/delete <ID> - Delete expense';
 
       await api.sendMessage({
         chat_id: chatId,
@@ -215,7 +215,7 @@ export default async function (message, ctx) {
       if (!allMembers || allMembers.length === 0) {
         await api.sendMessage({
           chat_id: chatId,
-          text: 'No participants found yet. Use /join or /addmember @user.',
+          text: 'No participants found yet.',
         });
         return;
       }
@@ -233,6 +233,15 @@ export default async function (message, ctx) {
     }
 
     case '/addmember': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can add members.',
+        });
+        return;
+      }
+
       const parts = text.split(/\s+/).slice(1);
       if (parts.length === 0) {
         await api.sendMessage({
@@ -385,10 +394,20 @@ export default async function (message, ctx) {
       }
 
       if (sub === 'next' || sub === 'skip') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can change duty.' });
+          return;
+        }
         await shiftGroupDutyOffset(chatId, 1);
       }
 
       if (sub === 'announce' || sub === 'now') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can trigger duty announcement.' });
+          return;
+        }
         const grp = await getGroup(chatId);
         const mems = await getMembers(chatId);
         await checkAndAnnounceDuty(api, grp, mems, true);
@@ -407,6 +426,8 @@ export default async function (message, ctx) {
         return;
       }
 
+      const { dateStr } = getUztTimeInfo();
+      const isDone = grp?.lastDutyDoneDate === dateStr;
       const todayPerson = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
 
       if (sub === 'schedule' || sub === 'list') {
@@ -414,31 +435,22 @@ export default async function (message, ctx) {
         await api.sendMessage({
           chat_id: chatId,
           text: formatDutyMessage(schedule, grp),
-          reply_markup:
-            roster.length > 1
-              ? {
-                  inline_keyboard: [[{ text: 'Next Person (Skip)', callback_data: 'duty_next' }]],
-                }
-              : undefined,
         });
         return;
       }
 
-      // Minimal response
+      // Minimal response:
+      // Regular users only see who is on duty (no buttons).
+      // Admin sees the [Done] button if not yet confirmed.
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      const reply_markup = (isAdmin && !isDone)
+        ? { inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]] }
+        : undefined;
+
       await api.sendMessage({
         chat_id: chatId,
-        text: `Duty: ${todayPerson}`,
-        reply_markup:
-          roster.length > 1
-            ? {
-                inline_keyboard: [
-                  [
-                    { text: 'Next (Skip)', callback_data: 'duty_next' },
-                    { text: 'Full Schedule', callback_data: 'duty_schedule' },
-                  ],
-                ],
-              }
-            : undefined,
+        text: formatMinimalDutyNotification(todayPerson, isDone),
+        reply_markup,
       });
       break;
     }

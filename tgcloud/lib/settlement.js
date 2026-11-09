@@ -169,8 +169,8 @@ export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0) {
   return roster[idx];
 }
 
-export function formatMinimalDutyNotification(person) {
-  return `Duty: ${person}`;
+export function formatMinimalDutyNotification(person, isDone = false) {
+  return isDone ? `Duty: ${person} (Done)` : `Duty: ${person}`;
 }
 
 export function getDutySchedule(group, members, daysCount = 7) {
@@ -178,8 +178,9 @@ export function getDutySchedule(group, members, daysCount = 7) {
   if (!roster || roster.length === 0) return [];
 
   const k = roster.length;
-  const { dayIndex } = getUztTimeInfo();
+  const { dayIndex, dateStr } = getUztTimeInfo();
   const dutyOffset = group?.dutyOffset || 0;
+  const isTodayDone = group?.lastDutyDoneDate === dateStr;
 
   const schedule = [];
   for (let i = 0; i < daysCount; i++) {
@@ -197,6 +198,7 @@ export function getDutySchedule(group, members, daysCount = 7) {
       dayOffset: i,
       dateLabel,
       name: roster[memberIdx],
+      isDone: i === 0 && isTodayDone,
     });
   }
 
