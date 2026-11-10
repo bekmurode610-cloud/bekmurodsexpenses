@@ -16,6 +16,7 @@ import {
   setGroupDutyRoster,
   setGroupExpenseRoster,
   setGroupDutyTime,
+  setGroupLastDutyDate,
   checkAndAnnounceDuty,
 } from '../lib/db-service.js';
 import {
@@ -494,6 +495,7 @@ export default async function (message, ctx) {
       }
 
       await setGroupDutyTime(chatId, timeArg);
+      await setGroupLastDutyDate(chatId, null);
       await api.sendMessage({
         chat_id: chatId,
         text: `Duty notice time set to ${timeArg} (UZT)`,
@@ -539,6 +541,7 @@ export default async function (message, ctx) {
           return;
         }
         await setGroupDutyTime(chatId, timeArg);
+        await setGroupLastDutyDate(chatId, null);
         await api.sendMessage({ chat_id: chatId, text: `Duty notice time set to ${timeArg} (UZT)` });
         return;
       }
