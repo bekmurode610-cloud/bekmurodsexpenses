@@ -10,6 +10,9 @@ import {
   syncChatAdmins,
   getGroup,
   shiftGroupDutyOffset,
+  setGroupDutyOffset,
+  swapDutyMembers,
+  assignDutyMember,
   setGroupDutyRoster,
   setGroupExpenseRoster,
   setGroupDutyTime,
@@ -23,6 +26,8 @@ import {
   getDutyRosterList,
   getExpenseRosterList,
   getDutyPerson,
+  getActiveDutyPerson,
+  formatUzDate,
   formatMinimalDutyNotification,
   getUztTimeInfo,
 } from '../lib/settlement.js';
@@ -52,13 +57,13 @@ export function formatDutyMessage(schedule, group) {
   const tomorrow = schedule[1];
   const dutyTime = group?.dutyTime || '09:00';
 
-  let resp = `Navbatchi: ${today.name}${today.isDone ? ' (Done)' : ''}\n`;
+  let resp = `Navbatchi (${today.dateLabel}): ${today.name}${today.isDone ? ' (Done)' : ''}\n`;
   if (tomorrow) {
-    resp += `Ertaga: ${tomorrow.name}\n`;
+    resp += `Keyingi navbat: ${tomorrow.name}\n`;
   }
   resp += `Vaqt: ${dutyTime} (UZT)\n\n`;
 
-  resp += "7 kunlik ro'yxat:\n";
+  resp += "Navbatchilik ketma-ketligi:\n";
   for (const item of schedule) {
     const tag = item.dayOffset === 0 ? (item.isDone ? ' (Bugun, Done)' : ' (Bugun)') : '';
     resp += `${item.dateLabel}: ${item.name}${tag}\n`;
@@ -499,9 +504,12 @@ export default async function (message, ctx) {
     case '/duty':
     case '/navbatchi':
     case '/clean':
-    case '/navbat': {
-      const args = text.split(/\s+/).slice(1);
-      const sub = (args[0] || '').toLowerCase();
+    case '/navbat':
+    case '/dutyswap': {
+      const isDirectSwap = command === '/dutyswap';
+      const rawArgs = text.split(/\s+/).slice(1);
+      const sub = isDirectSwap ? 'swap' : (rawArgs[0] || '').toLowerCase();
+      const args = isDirectSwap ? ['swap', ...rawArgs] : rawArgs;
 
       if (sub === 'set') {
         const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
@@ -535,13 +543,158 @@ export default async function (message, ctx) {
         return;
       }
 
+      if (sub === 'manage' || sub === 'boshqaruv') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can manage duty.' });
+          return;
+        }
+
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        const roster = getDutyRosterList(grp, mems);
+
+        if (!roster || roster.length === 0) {
+          await api.sendMessage({ chat_id: chatId, text: "Navbatchi ro'yxati belgilanmagan. /setduty @u1 @u2" });
+          return;
+        }
+
+        const k = roster.length;
+        const currentOffset = grp?.dutyOffset || 0;
+        const activeIdx = ((currentOffset % k) + k) % k;
+
+        let resp = "Navbatchilikni boshqarish:\n\n";
+        roster.forEach((name, idx) => {
+          const isCurrent = idx === activeIdx;
+          resp += `${idx + 1}. ${name}${isCurrent ? ' 👈 (Hozirgi navbatchi)' : ''}\n`;
+        });
+
+        resp += "\nBoshqaruv buyruqlari:\n";
+        resp += "/duty swap @user1 @user2 — O'rinlarini almashtirish\n";
+        resp += "/duty assign @user — Hozirgi navbatchini belgilash\n";
+        resp += "/duty next — Keyingi kishiga o'tkazish\n";
+        resp += "/duty prev — Oldingi kishiga qaytarish\n";
+        resp += "/duty done — Bugungi ishni bajarildi deb hisoblash";
+
+        await api.sendMessage({
+          chat_id: chatId,
+          text: resp.trim(),
+        });
+        return;
+      }
+
+      if (sub === 'swap' || sub === 'almash') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can swap duty.' });
+          return;
+        }
+        const u1 = args[1];
+        const u2 = args[2];
+        if (!u1 || !u2) {
+          await api.sendMessage({ chat_id: chatId, text: "Usage: /duty swap @user1 @user2" });
+          return;
+        }
+        const res = await swapDutyMembers(chatId, u1, u2);
+        if (res?.error) {
+          await api.sendMessage({ chat_id: chatId, text: res.error });
+          return;
+        }
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Navbatchilar o'rni almashtirildi: ${res.userA} ↔ ${res.userB}\nYangi ro'yxat: ${res.roster.join(', ')}`,
+        });
+        return;
+      }
+
+      if (sub === 'assign' || sub === 'setactive') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can assign duty.' });
+          return;
+        }
+        const target = args[1];
+        if (!target) {
+          await api.sendMessage({ chat_id: chatId, text: "Usage: /duty assign @username" });
+          return;
+        }
+        const res = await assignDutyMember(chatId, target);
+        if (res?.error) {
+          await api.sendMessage({ chat_id: chatId, text: res.error });
+          return;
+        }
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Hozirgi navbatchi belgilandi: ${res.person}`,
+        });
+        return;
+      }
+
       if (sub === 'next' || sub === 'skip') {
         const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
         if (!isAdmin) {
           await api.sendMessage({ chat_id: chatId, text: 'Only group admins can change duty.' });
           return;
         }
-        await shiftGroupDutyOffset(chatId, 1);
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        const roster = getDutyRosterList(grp, mems);
+        if (!roster || roster.length === 0) return;
+        const k = roster.length;
+        const current = grp?.dutyOffset || 0;
+        const nextIdx = ((current + 1) % k + k) % k;
+        await setGroupDutyOffset(chatId, nextIdx);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Navbatchi keyingisiga o'tkazildi: ${roster[nextIdx]}`,
+        });
+        return;
+      }
+
+      if (sub === 'prev') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can change duty.' });
+          return;
+        }
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        const roster = getDutyRosterList(grp, mems);
+        if (!roster || roster.length === 0) return;
+        const k = roster.length;
+        const current = grp?.dutyOffset || 0;
+        const prevIdx = ((current - 1) % k + k) % k;
+        await setGroupDutyOffset(chatId, prevIdx);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Navbatchi oldingisiga qaytarildi: ${roster[prevIdx]}`,
+        });
+        return;
+      }
+
+      if (sub === 'done' || sub === 'confirm') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can confirm duty.' });
+          return;
+        }
+        const { dateStr, nowUzt } = getUztTimeInfo();
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        const roster = getDutyRosterList(grp, mems);
+        if (!roster || roster.length === 0) return;
+        const k = roster.length;
+        const current = grp?.dutyOffset || 0;
+        const person = roster[((current % k) + k) % k];
+        await setGroupLastDutyDoneDate(chatId, dateStr);
+        const nextIdx = (current + 1) % k;
+        await setGroupDutyOffset(chatId, nextIdx);
+        const dateLabel = formatUzDate(nowUzt);
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `${formatMinimalDutyNotification(person, dateLabel, true)}\nKeyingi navbat: ${roster[nextIdx]}`,
+        });
+        return;
       }
 
       if (sub === 'announce' || sub === 'now') {
@@ -568,9 +721,11 @@ export default async function (message, ctx) {
         return;
       }
 
-      const { dateStr } = getUztTimeInfo();
+      const { dateStr, nowUzt } = getUztTimeInfo();
       const isDone = grp?.lastDutyDoneDate === dateStr;
-      const todayPerson = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+      const currentOffset = grp?.dutyOffset || 0;
+      const activePerson = getActiveDutyPerson(roster, currentOffset, isDone);
+      const dateLabel = formatUzDate(nowUzt);
 
       if (sub === 'schedule' || sub === 'list') {
         const schedule = getDutySchedule(grp, mems, 7);
@@ -582,7 +737,7 @@ export default async function (message, ctx) {
       }
 
       // Minimal response:
-      // Regular users only see who is on duty (no buttons).
+      // Regular users only see who is on duty with date (no buttons).
       // Admin sees the [Done] button if not yet confirmed.
       const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
       const reply_markup = (isAdmin && !isDone)
@@ -591,7 +746,7 @@ export default async function (message, ctx) {
 
       await api.sendMessage({
         chat_id: chatId,
-        text: formatMinimalDutyNotification(todayPerson, isDone),
+        text: formatMinimalDutyNotification(activePerson, dateLabel, isDone),
         reply_markup,
       });
       break;

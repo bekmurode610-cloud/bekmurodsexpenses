@@ -188,20 +188,46 @@ export function getDutyRosterList(group, members = []) {
   return [];
 }
 
+export function formatUzDate(date = null) {
+  const dObj = date || getUztTimeInfo().nowUzt;
+  const months = [
+    'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun',
+    'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'
+  ];
+  const day = dObj.getUTCDate();
+  const month = months[dObj.getUTCMonth()];
+  return `${day}-${month}`;
+}
+
 /**
- * Returns the person on duty for dayOffset (0 = today, 1 = tomorrow, etc.)
+ * Returns the current active duty person.
+ * Unlike calendar days, the duty person STAYS the same until marked Done!
+ * If isTodayDone is true, it returns the person who completed today's duty.
+ * Otherwise, it returns the person who is currently pending duty.
  */
-export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0) {
+export function getActiveDutyPerson(roster, dutyOffset = 0, isTodayDone = false) {
   if (!roster || roster.length === 0) return null;
-  const { dayIndex } = getUztTimeInfo();
   const k = roster.length;
-  const targetDay = dayIndex + dayOffset;
-  const idx = (((targetDay + (dutyOffset || 0)) % k) + k) % k;
+  const targetIdx = isTodayDone
+    ? (((dutyOffset - 1) % k) + k) % k
+    : (((dutyOffset % k) + k) % k);
+  return roster[targetIdx];
+}
+
+export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0, isTodayDone = false) {
+  if (!roster || roster.length === 0) return null;
+  const k = roster.length;
+  if (dayOffset === 0) {
+    return getActiveDutyPerson(roster, dutyOffset, isTodayDone);
+  }
+  const base = isTodayDone ? dutyOffset : dutyOffset + 1;
+  const idx = (((base + dayOffset - 1) % k) + k) % k;
   return roster[idx];
 }
 
-export function formatMinimalDutyNotification(person, isDone = false) {
-  return isDone ? `Navbatchi: ${person} (Done)` : `Navbatchi: ${person}`;
+export function formatMinimalDutyNotification(person, dateLabel = null, isDone = false) {
+  const dt = dateLabel || formatUzDate();
+  return isDone ? `Navbatchi (${dt}): ${person} (Done)` : `Navbatchi (${dt}): ${person}`;
 }
 
 export function getDutySchedule(group, members, daysCount = 7) {
@@ -209,21 +235,23 @@ export function getDutySchedule(group, members, daysCount = 7) {
   if (!roster || roster.length === 0) return [];
 
   const k = roster.length;
-  const { dayIndex, dateStr } = getUztTimeInfo();
-  const dutyOffset = group?.dutyOffset || 0;
+  const { dateStr, nowUztMs } = getUztTimeInfo();
   const isTodayDone = group?.lastDutyDoneDate === dateStr;
+  const dutyOffset = group?.dutyOffset || 0;
 
   const schedule = [];
   for (let i = 0; i < daysCount; i++) {
-    const targetDay = dayIndex + i;
-    const memberIdx = (((targetDay + dutyOffset) % k) + k) % k;
-    const dayDateUzt = new Date(targetDay * DAY_MS);
-    const dateLabel = dayDateUzt.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      timeZone: 'UTC',
-    });
+    const dayDateUzt = new Date(nowUztMs + i * DAY_MS);
+    const dateLabel = formatUzDate(dayDateUzt);
+
+    let memberIdx;
+    if (isTodayDone) {
+      memberIdx = i === 0
+        ? (((dutyOffset - 1) % k) + k) % k
+        : (((dutyOffset + i - 1) % k) + k) % k;
+    } else {
+      memberIdx = (((dutyOffset + i) % k) + k) % k;
+    }
 
     schedule.push({
       dayOffset: i,

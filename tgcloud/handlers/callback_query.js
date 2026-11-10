@@ -7,11 +7,13 @@ import {
   getMembers,
   getGroup,
   shiftGroupDutyOffset,
+  setGroupDutyOffset,
   setGroupLastDutyDoneDate,
 } from '../lib/db-service.js';
 import {
   getDutyRosterList,
   getDutyPerson,
+  formatUzDate,
   formatMinimalDutyNotification,
   getUztTimeInfo,
 } from '../lib/settlement.js';
@@ -54,22 +56,37 @@ export default async function (callbackQuery, ctx) {
       return;
     }
 
-    const { dateStr } = getUztTimeInfo();
-    await setGroupLastDutyDoneDate(chatId, dateStr);
-
+    const { dateStr, nowUzt } = getUztTimeInfo();
     const grp = await getGroup(chatId);
     const mems = await getMembers(chatId);
     const roster = getDutyRosterList(grp, mems);
-    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+    if (!roster || roster.length === 0) {
+      await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Roster empty' });
+      return;
+    }
 
+    const k = roster.length;
+    const currentOffset = grp?.dutyOffset || 0;
+    const person = roster[((currentOffset % k) + k) % k];
+
+    // 1. Mark done for today
+    await setGroupLastDutyDoneDate(chatId, dateStr);
+
+    // 2. Advance rotation to the next person!
+    const nextOffset = (currentOffset + 1) % k;
+    await setGroupDutyOffset(chatId, nextOffset);
+
+    // 3. Edit message in-place with date
+    const dateLabel = formatUzDate(nowUzt);
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: formatMinimalDutyNotification(person, true),
+      text: formatMinimalDutyNotification(person, dateLabel, true),
     });
+
     await api.answerCallbackQuery({
       callback_query_id: cbId,
-      text: 'Confirmed done.',
+      text: `Bajarildi. Keyingi navbat: ${roster[nextOffset]}`,
     });
     return;
   }
@@ -86,16 +103,23 @@ export default async function (callbackQuery, ctx) {
       return;
     }
 
-    await shiftGroupDutyOffset(chatId, 1);
     const grp = await getGroup(chatId);
     const mems = await getMembers(chatId);
     const roster = getDutyRosterList(grp, mems);
-    const person = getDutyPerson(roster, grp?.dutyOffset || 0, 0);
+    if (!roster || roster.length === 0) return;
+    const k = roster.length;
+    const current = grp?.dutyOffset || 0;
+    const nextOffset = (current + 1) % k;
+    await setGroupDutyOffset(chatId, nextOffset);
+
+    const { nowUzt } = getUztTimeInfo();
+    const person = roster[nextOffset];
+    const dateLabel = formatUzDate(nowUzt);
 
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: formatMinimalDutyNotification(person, false),
+      text: formatMinimalDutyNotification(person, dateLabel, false),
       reply_markup: {
         inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
       },

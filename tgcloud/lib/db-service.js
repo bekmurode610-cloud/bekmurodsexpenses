@@ -5,6 +5,8 @@ import {
   getUztTimeInfo,
   getDutyRosterList,
   getDutyPerson,
+  getActiveDutyPerson,
+  formatUzDate,
   formatMinimalDutyNotification,
 } from './settlement.js';
 
@@ -65,22 +67,70 @@ export async function shiftGroupDutyOffset(groupId, delta = 1) {
   return nextOffset;
 }
 
+export async function setGroupDutyOffset(groupId, offset) {
+  await db.update(groups).set({ dutyOffset: offset }).where(eq(groups.id, groupId)).run();
+}
+
+export async function swapDutyMembers(groupId, userA, userB) {
+  const grp = await getGroup(groupId);
+  const mems = await getMembers(groupId);
+  const roster = [...getDutyRosterList(grp, mems)];
+  if (roster.length < 2) return { error: "Navbatchilar ro'yxatida kamida 2 kishi bo'lishi kerak." };
+
+  const normA = normalizeName(userA);
+  const normB = normalizeName(userB);
+
+  const idxA = roster.findIndex((n) => normalizeName(n) === normA);
+  const idxB = roster.findIndex((n) => normalizeName(n) === normB);
+
+  if (idxA === -1 || idxB === -1) {
+    const missing = [];
+    if (idxA === -1) missing.push(userA);
+    if (idxB === -1) missing.push(userB);
+    return { error: `Topilmadi: ${missing.join(', ')} (navbatchilar ro'yxatida mavjud emas)` };
+  }
+
+  const temp = roster[idxA];
+  roster[idxA] = roster[idxB];
+  roster[idxB] = temp;
+
+  await setGroupDutyRoster(groupId, roster);
+  return { roster, userA: roster[idxA], userB: roster[idxB] };
+}
+
+export async function assignDutyMember(groupId, user) {
+  const grp = await getGroup(groupId);
+  const mems = await getMembers(groupId);
+  const roster = getDutyRosterList(grp, mems);
+  if (!roster || roster.length === 0) return { error: "Navbatchilar ro'yxati bo'sh." };
+
+  const normUser = normalizeName(user);
+  const idx = roster.findIndex((n) => normalizeName(n) === normUser);
+  if (idx === -1) {
+    return { error: `${user} navbatchilar ro'yxatida topilmadi.` };
+  }
+
+  await setGroupDutyOffset(groupId, idx);
+  return { roster, person: roster[idx], index: idx };
+}
+
 export async function checkAndAnnounceDuty(api, group, members, force = false) {
   if (!group) return false;
   const roster = getDutyRosterList(group, members);
   if (!roster || roster.length === 0) return false;
 
-  const { dateStr, timeStr } = getUztTimeInfo();
+  const { dateStr, timeStr, nowUzt } = getUztTimeInfo();
   const scheduledTime = group.dutyTime || '09:00';
 
   if (force || (timeStr >= scheduledTime && group.lastDutyDate !== dateStr)) {
-    const person = getDutyPerson(roster, group.dutyOffset || 0, 0);
+    const isDone = group.lastDutyDoneDate === dateStr;
+    const person = getActiveDutyPerson(roster, group.dutyOffset || 0, isDone);
     if (person) {
       try {
-        const isDone = group.lastDutyDoneDate === dateStr;
+        const dateLabel = formatUzDate(nowUzt);
         const msgParams = {
           chat_id: group.id,
-          text: formatMinimalDutyNotification(person, isDone),
+          text: formatMinimalDutyNotification(person, dateLabel, isDone),
         };
         if (!isDone) {
           msgParams.reply_markup = {
