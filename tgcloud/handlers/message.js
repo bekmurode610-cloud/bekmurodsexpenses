@@ -28,6 +28,7 @@ import {
 } from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
 import { formatMoney, parseExpenseInput } from '../lib/format.js';
+import { setupBotCommands } from '../lib/commands.js';
 
 function buildMemberNameMap(groupMembers, expensesList = []) {
   const map = new Map();
@@ -177,7 +178,9 @@ export default async function (message, ctx) {
   switch (command) {
     case '/start':
     case '/help': {
-      const helpText =
+      const isAdmin = !isPrivate && (await isCreatorOrAdmin(chatId, userId, username));
+
+      let helpText =
         'Expense & Navbatchi Tracker\n\n' +
         'Xarajat kiritish:\n' +
         '* 40 ming nonga\n' +
@@ -186,21 +189,42 @@ export default async function (message, ctx) {
         '/balance - Hisob-kitob (balans)\n' +
         '/duty - Navbatchi kimligini ko\'rish\n' +
         '/expenses - Yaqindagi xarajatlar\n' +
+        '/members - Guruh a\'zolari ro\'yxati\n' +
         '/weekly - Haftalik hisobot\n' +
-        '/detail - To\'liq hisobot\n\n' +
-        'Admin buyruqlari:\n' +
-        '/setmembers @u1 @u2 - Xarajat a\'zolarini belgilash\n' +
-        '/setduty @u1 @u2 - Navbatchilarni kiritish\n' +
-        '/setdutytime 09:00 - Eslatma vaqtini sozlash\n' +
-        '/duty next - Keyingi kishiga o\'tkazish\n' +
-        '/addmember @user - A\'zo qo\'shish\n' +
-        '/removemember @user - A\'zoni o\'chirish\n' +
-        '/settle - Qarzlarni nollash\n' +
-        '/delete <ID> - Xarajatni o\'chirish';
+        '/detail - To\'liq hisobot';
+
+      if (isAdmin) {
+        helpText +=
+          '\n\nAdmin buyruqlari:\n' +
+          '/setmembers @u1 @u2 - Xarajat a\'zolarini belgilash\n' +
+          '/setduty @u1 @u2 - Navbatchilarni kiritish\n' +
+          '/setdutytime 09:00 - Eslatma vaqtini sozlash\n' +
+          '/duty next - Keyingi kishiga o\'tkazish\n' +
+          '/settle - Qarzlarni nollash\n' +
+          '/reset - Xarajatlarni o\'chirish\n' +
+          '/setcommands - Menyuni yangilash';
+      }
 
       await api.sendMessage({
         chat_id: chatId,
         text: helpText,
+      });
+      break;
+    }
+
+    case '/setcommands': {
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await api.sendMessage({
+          chat_id: chatId,
+          text: 'Only group admins can update commands.',
+        });
+        return;
+      }
+      await setupBotCommands(api);
+      await api.sendMessage({
+        chat_id: chatId,
+        text: "Menyu buyruqlari muvaffaqiyatli yangilandi.",
       });
       break;
     }
