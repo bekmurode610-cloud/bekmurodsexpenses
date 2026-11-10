@@ -1,0 +1,25 @@
+name: Automatic Duty Check
+
+on:
+  schedule:
+    # Runs every 10 minutes 24/7 across all time zones
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-duty:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run TGCloud Duty Check
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg' }}
+        run: |
+          npx --yes @tgcloud/cli run endpoints/check_duty '{}'

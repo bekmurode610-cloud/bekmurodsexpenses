@@ -5,9 +5,13 @@ export default async function (input, ctx) {
   const groupsList = await getAllGroups();
   const announced = [];
   for (const grp of groupsList) {
-    const mems = await getMembers(grp.id);
-    const sent = await checkAndAnnounceDuty(api, grp, mems);
-    if (sent) announced.push(grp.id);
+    try {
+      const mems = await getMembers(grp.id);
+      const sent = await checkAndAnnounceDuty(api, grp, mems);
+      if (sent) announced.push(grp.id);
+    } catch (err) {
+      console.warn(`Could not check duty for group ${grp?.id}:`, err?.message || err);
+    }
   }
   return { ok: true, announcedCount: announced.length, announced };
 }
