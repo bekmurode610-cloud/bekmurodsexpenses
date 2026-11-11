@@ -1,0 +1,25 @@
+name: Deploy to TGCloud
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy to TGCloud
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg' }}
+        run: |
+          npx --yes @tgcloud/cli push
+          npx --yes @tgcloud/cli run endpoints/setup_commands '{}'
