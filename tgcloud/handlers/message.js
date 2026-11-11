@@ -205,6 +205,7 @@ export default async function (message, ctx) {
           '/setmembers @u1 @u2 - Xarajat a\'zolarini belgilash\n' +
           '/setduty @u1 @u2 - Navbatchilarni kiritish\n' +
           '/setdutytime 09:00 - Eslatma vaqtini sozlash\n' +
+          '/duty undone - "Done" ni bekor qilish\n' +
           '/duty next - Keyingi kishiga o\'tkazish\n' +
           '/settle - Qarzlarni nollash\n' +
           '/reset - Xarajatlarni o\'chirish\n' +
@@ -573,11 +574,12 @@ export default async function (message, ctx) {
         });
 
         resp += "\nBoshqaruv buyruqlari:\n";
+        resp += "/duty done — Bugungi ishni bajarildi deb hisoblash\n";
+        resp += "/duty undone — 'Done' ni bekor qilish\n";
         resp += "/duty swap @user1 @user2 — O'rinlarini almashtirish\n";
         resp += "/duty assign @user — Hozirgi navbatchini belgilash\n";
         resp += "/duty next — Keyingi kishiga o'tkazish\n";
-        resp += "/duty prev — Oldingi kishiga qaytarish\n";
-        resp += "/duty done — Bugungi ishni bajarildi deb hisoblash";
+        resp += "/duty prev — Oldingi kishiga qaytarish";
 
         await api.sendMessage({
           chat_id: chatId,
@@ -626,9 +628,15 @@ export default async function (message, ctx) {
           await api.sendMessage({ chat_id: chatId, text: res.error });
           return;
         }
+        await setGroupLastDutyDoneDate(chatId, null);
+        const { nowUzt } = getUztTimeInfo();
+        const dateLabel = formatUzDate(nowUzt);
         await api.sendMessage({
           chat_id: chatId,
-          text: `Hozirgi navbatchi belgilandi: ${res.person}`,
+          text: `Hozirgi navbatchi belgilandi: ${res.person}\n${formatMinimalDutyNotification(res.person, dateLabel, false)}`,
+          reply_markup: {
+            inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
+          },
         });
         return;
       }
@@ -675,6 +683,41 @@ export default async function (message, ctx) {
         return;
       }
 
+      if (sub === 'undone' || sub === 'undo' || sub === 'cancel' || sub === 'unconfirm') {
+        const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+        if (!isAdmin) {
+          await api.sendMessage({ chat_id: chatId, text: 'Only group admins can undo duty.' });
+          return;
+        }
+        const grp = await getGroup(chatId);
+        const mems = await getMembers(chatId);
+        const roster = getDutyRosterList(grp, mems);
+        if (!roster || roster.length === 0) return;
+
+        const { dateStr, nowUzt } = getUztTimeInfo();
+        const k = roster.length;
+        const current = grp?.dutyOffset || 0;
+
+        let targetOffset = current;
+        if (grp?.lastDutyDoneDate === dateStr) {
+          targetOffset = ((current - 1) % k + k) % k;
+          await setGroupDutyOffset(chatId, targetOffset);
+        }
+        await setGroupLastDutyDoneDate(chatId, null);
+
+        const person = roster[targetOffset];
+        const dateLabel = formatUzDate(nowUzt);
+
+        await api.sendMessage({
+          chat_id: chatId,
+          text: `Done holati bekor qilindi.\n${formatMinimalDutyNotification(person, dateLabel, false)}`,
+          reply_markup: {
+            inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
+          },
+        });
+        return;
+      }
+
       if (sub === 'done' || sub === 'confirm') {
         const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
         if (!isAdmin) {
@@ -696,6 +739,9 @@ export default async function (message, ctx) {
         await api.sendMessage({
           chat_id: chatId,
           text: `${formatMinimalDutyNotification(person, dateLabel, true)}\nKeyingi navbat: ${roster[nextIdx]}`,
+          reply_markup: {
+            inline_keyboard: [[{ text: 'Undo', callback_data: 'duty_undone' }]],
+          },
         });
         return;
       }

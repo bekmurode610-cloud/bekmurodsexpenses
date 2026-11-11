@@ -76,17 +76,67 @@ export default async function (callbackQuery, ctx) {
     const nextOffset = (currentOffset + 1) % k;
     await setGroupDutyOffset(chatId, nextOffset);
 
-    // 3. Edit message in-place with date
+    // 3. Edit message in-place with date and provide an Undo button
     const dateLabel = formatUzDate(nowUzt);
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
       text: formatMinimalDutyNotification(person, dateLabel, true),
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Undo', callback_data: 'duty_undone' }]],
+      },
     });
 
     await api.answerCallbackQuery({
       callback_query_id: cbId,
       text: `Bajarildi. Keyingi navbat: ${roster[nextOffset]}`,
+    });
+    return;
+  }
+
+  // Admin undoing confirmation of duty
+  if (data === 'duty_undone') {
+    const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+    if (!isAdmin) {
+      await api.answerCallbackQuery({
+        callback_query_id: cbId,
+        text: 'Only admin can undo duty confirmation.',
+        show_alert: true,
+      });
+      return;
+    }
+
+    const { dateStr, nowUzt } = getUztTimeInfo();
+    const grp = await getGroup(chatId);
+    const mems = await getMembers(chatId);
+    const roster = getDutyRosterList(grp, mems);
+    if (!roster || roster.length === 0) {
+      await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Roster empty' });
+      return;
+    }
+
+    const k = roster.length;
+    const currentOffset = grp?.dutyOffset || 0;
+    // Step back to the person who was confirmed
+    const prevOffset = ((currentOffset - 1) % k + k) % k;
+    await setGroupDutyOffset(chatId, prevOffset);
+    await setGroupLastDutyDoneDate(chatId, null);
+
+    const person = roster[prevOffset];
+    const dateLabel = formatUzDate(nowUzt);
+
+    await api.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      text: formatMinimalDutyNotification(person, dateLabel, false),
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
+      },
+    });
+
+    await api.answerCallbackQuery({
+      callback_query_id: cbId,
+      text: `Done bekor qilindi. Navbatchi yana: ${person}`,
     });
     return;
   }
