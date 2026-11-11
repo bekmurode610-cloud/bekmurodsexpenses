@@ -18,8 +18,8 @@ jobs:
           node-version: 20
 
       - name: Deploy to TGCloud
-        env:
-          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg' }}
         run: |
+          mkdir -p .tgcloud
+          echo '{"token":"app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg"}' > .tgcloud/credentials
           npx --yes @tgcloud/cli push
           npx --yes @tgcloud/cli run endpoints/setup_commands '{}'
