@@ -192,12 +192,10 @@ export default async function (message, ctx) {
         '* 40 ming nonga\n' +
         '* 2 ta non 10 ming\n\n' +
         'Buyruqlar:\n' +
-        '/balance - Hisob-kitob (balans)\n' +
-        '/duty - Navbatchi kimligini ko\'rish\n' +
         '/expenses - Yaqindagi xarajatlar\n' +
-        '/members - Guruh a\'zolari ro\'yxati\n' +
-        '/weekly - Haftalik hisobot\n' +
-        '/detail - To\'liq hisobot';
+        '/duty - Navbatchi kimligini ko\'rish\n' +
+        '/detail - To\'liq hisobot\n' +
+        '/members - Guruh a\'zolari ro\'yxati';
 
       if (isAdmin) {
         helpText +=

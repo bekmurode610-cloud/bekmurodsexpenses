@@ -1,10 +1,8 @@
 export const USER_COMMANDS = [
-  { command: 'balance', description: 'Hisob-kitob (balans)' },
-  { command: 'duty', description: 'Bugungi navbatchi' },
   { command: 'expenses', description: 'Yaqindagi xarajatlar' },
-  { command: 'members', description: "A'zolar ro'yxati" },
-  { command: 'weekly', description: 'Haftalik hisobot' },
+  { command: 'duty', description: 'Bugungi navbatchi' },
   { command: 'detail', description: "To'liq hisobot" },
+  { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'help', description: "Qo'llanma" },
 ];
 
@@ -14,11 +12,9 @@ export const ADMIN_COMMANDS = [
   { command: 'setdutytime', description: "Eslatma vaqtini sozlash (UZT)" },
   { command: 'duty', description: "Navbatchi va boshqaruv (/duty manage)" },
   { command: 'dutyswap', description: "Navbatchilar o'rnini almashtirish" },
-  { command: 'balance', description: "Hisob-kitob (balans)" },
   { command: 'expenses', description: "Yaqindagi xarajatlar" },
-  { command: 'members', description: "A'zolar ro'yxati" },
-  { command: 'weekly', description: "Haftalik hisobot" },
   { command: 'detail', description: "To'liq hisobot" },
+  { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'settle', description: "Qarzlarni nollash" },
   { command: 'reset', description: "Xarajatlarni o'chirish" },
   { command: 'help', description: "Qo'llanma" },
