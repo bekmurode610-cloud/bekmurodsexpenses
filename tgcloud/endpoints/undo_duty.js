@@ -4,12 +4,14 @@ import {
   getMembers,
   setGroupDutyOffset,
   setGroupLastDutyDoneDate,
+  sendAutoDeleteMessage,
 } from '../lib/db-service.js';
 import {
   getDutyRosterList,
   getUztTimeInfo,
   formatUzDate,
   formatMinimalDutyNotification,
+  getDutyAdminKeyboard,
 } from '../lib/settlement.js';
 
 export default async function (input, ctx) {
@@ -35,12 +37,10 @@ export default async function (input, ctx) {
   const person = roster[targetOffset];
   const dateLabel = formatUzDate(nowUzt);
 
-  await api.sendMessage({
+  await sendAutoDeleteMessage(api, chatId, {
     chat_id: chatId,
-    text: `Done holati bekor qilindi.\n${formatMinimalDutyNotification(person, dateLabel, false)}`,
-    reply_markup: {
-      inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
-    },
+    text: `Done holati bekor qilindi.\n\n${formatMinimalDutyNotification(person, dateLabel, false)}`,
+    reply_markup: getDutyAdminKeyboard(false),
   });
 
   return {

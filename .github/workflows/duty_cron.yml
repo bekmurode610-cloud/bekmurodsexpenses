@@ -1,9 +1,8 @@
-name: Automatic Duty Check
+name: Automatic Duty Check & Auto-Delete Sweeper
 
 on:
   schedule:
-    # Runs every 10 minutes 24/7 across all time zones
-    - cron: '*/10 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -18,8 +17,12 @@ jobs:
         with:
           node-version: 20
 
-      - name: Run TGCloud Duty Check
+      - name: Run Continuous TGCloud Duty & Deletion Sweeper Loop
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg' }}
         run: |
-          npx --yes @tgcloud/cli run endpoints/check_duty '{}'
+          END=$((SECONDS+260))
+          while [ $SECONDS -lt $END ]; do
+            npx --yes @tgcloud/cli run endpoints/check_duty '{}' || true
+            sleep 20
+          done

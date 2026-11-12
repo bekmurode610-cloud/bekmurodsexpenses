@@ -8,6 +8,8 @@ import {
   getGroup,
   setGroupDutyOffset,
   setGroupLastDutyDoneDate,
+  touchMessageDeletion,
+  cleanupPendingDeletions,
 } from '../lib/db-service.js';
 import {
   getDutyRosterList,
@@ -38,6 +40,9 @@ export function getDutyAdminKeyboard(isDone) {
 export default async function (callbackQuery, ctx) {
   if (!callbackQuery) return;
 
+  // Sweep expired messages
+  await cleanupPendingDeletions(api);
+
   const data = callbackQuery.data;
   const cbId = callbackQuery.id;
   const chatId = callbackQuery.message?.chat?.id;
@@ -48,6 +53,11 @@ export default async function (callbackQuery, ctx) {
   if (!chatId || !messageId) {
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
+  }
+
+  // Refresh 2-minute timer on interaction with message in group chat
+  if (chatId < 0) {
+    await touchMessageDeletion(chatId, messageId, 120);
   }
 
   if (data === 'cancel_action') {

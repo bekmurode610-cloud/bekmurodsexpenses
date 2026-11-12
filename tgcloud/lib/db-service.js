@@ -1,6 +1,6 @@
 import { db } from 'sdk';
 import { eq, and, desc, gte, lte, asc } from 'sdk/db';
-import { groups, members, expenses, userRoles } from '../schema.js';
+import { groups, members, expenses, userRoles, pendingDeletions } from '../schema.js';
 import {
   getUztTimeInfo,
   getDutyRosterList,
@@ -8,6 +8,7 @@ import {
   getActiveDutyPerson,
   formatUzDate,
   formatMinimalDutyNotification,
+  getDutyAdminKeyboard,
 } from './settlement.js';
 
 function normalizeName(str) {
@@ -131,13 +132,9 @@ export async function checkAndAnnounceDuty(api, group, members, force = false) {
         const msgParams = {
           chat_id: group.id,
           text: formatMinimalDutyNotification(person, dateLabel, isDone),
+          reply_markup: getDutyAdminKeyboard(isDone),
         };
-        if (!isDone) {
-          msgParams.reply_markup = {
-            inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
-          };
-        }
-        await api.sendMessage(msgParams);
+        await sendAutoDeleteMessage(api, group.id, msgParams);
         await setGroupLastDutyDate(group.id, dateStr);
         return true;
       } catch (err) {
@@ -166,26 +163,28 @@ export async function ensureMember(telegramId, groupId, name, groupName) {
     return;
   }
 
-  // 2. Check if there is a placeholder member (telegramId < 0) with the same normalized name/username
+  // 2. Check if there is an existing member with the same normalized name/username
   if (name) {
     const allGroupMembers = await getMembers(groupId);
     const normTarget = normalizeName(name);
-    const placeholder = allGroupMembers.find(
-      (m) => m.telegramId < 0 && normalizeName(m.name) === normTarget
+    const existingByName = allGroupMembers.find(
+      (m) => normalizeName(m.name) === normTarget
     );
 
-    if (placeholder) {
-      const oldId = placeholder.telegramId;
+    if (existingByName) {
+      const oldId = existingByName.telegramId;
       await db
         .update(members)
         .set({ telegramId, name })
-        .where(eq(members.id, placeholder.id))
+        .where(eq(members.id, existingByName.id))
         .run();
-      await db
-        .update(expenses)
-        .set({ payerId: telegramId, payerName: name })
-        .where(and(eq(expenses.groupId, groupId), eq(expenses.payerId, oldId)))
-        .run();
+      if (oldId !== telegramId) {
+        await db
+          .update(expenses)
+          .set({ payerId: telegramId, payerName: name })
+          .where(and(eq(expenses.groupId, groupId), eq(expenses.payerId, oldId)))
+          .run();
+      }
       return;
     }
   }
@@ -341,4 +340,114 @@ export async function resetGroup(groupId) {
 export async function getUserRole(telegramId) {
   const row = await db.select().from(userRoles).where(eq(userRoles.telegramId, telegramId)).get();
   return row ? row.role : 'normal';
+}
+
+export async function queueMessageDeletion(chatId, messageId, delaySeconds = 120) {
+  if (!chatId || !messageId) return;
+  const deleteAt = Math.floor(Date.now() / 1000) + delaySeconds;
+  await db
+    .insert(pendingDeletions)
+    .values({
+      chatId,
+      messageId,
+      deleteAt,
+    })
+    .run();
+}
+
+export async function touchMessageDeletion(chatId, messageId, delaySeconds = 120) {
+  if (!chatId || !messageId) return;
+  const newDeleteAt = Math.floor(Date.now() / 1000) + delaySeconds;
+  const existing = await db
+    .select()
+    .from(pendingDeletions)
+    .where(and(eq(pendingDeletions.chatId, chatId), eq(pendingDeletions.messageId, messageId)))
+    .get();
+
+  if (existing) {
+    await db
+      .update(pendingDeletions)
+      .set({ deleteAt: newDeleteAt })
+      .where(eq(pendingDeletions.id, existing.id))
+      .run();
+  } else {
+    await db
+      .insert(pendingDeletions)
+      .values({
+        chatId,
+        messageId,
+        deleteAt: newDeleteAt,
+      })
+      .run();
+  }
+}
+
+export async function cleanupPendingDeletions(api) {
+  if (!api) return 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  try {
+    const expired = await db
+      .select()
+      .from(pendingDeletions)
+      .where(lte(pendingDeletions.deleteAt, nowSec))
+      .limit(50)
+      .all();
+
+    if (!expired || expired.length === 0) return 0;
+
+    let deletedCount = 0;
+    for (const item of expired) {
+      try {
+        await api.deleteMessage({
+          chat_id: item.chatId,
+          message_id: item.messageId,
+        });
+        deletedCount++;
+      } catch (delErr) {
+        // Message might already be deleted or bot lacks delete permission
+      }
+      await db.delete(pendingDeletions).where(eq(pendingDeletions.id, item.id)).run();
+    }
+    return deletedCount;
+  } catch (err) {
+    console.warn('Error in cleanupPendingDeletions:', err?.message || err);
+    return 0;
+  }
+}
+
+export async function sendAutoDeleteMessage(api, chatId, msgParams, userMsgId = null, delaySeconds = 120) {
+  const sent = await api.sendMessage(msgParams);
+  // Auto-deletion timer applies to group chats (chatId < 0)
+  if (chatId < 0) {
+    if (sent?.message_id) {
+      await queueMessageDeletion(chatId, sent.message_id, delaySeconds);
+      if (typeof setTimeout !== 'undefined') {
+        setTimeout(async () => {
+          try {
+            await api.deleteMessage({ chat_id: chatId, message_id: sent.message_id });
+            await db
+              .delete(pendingDeletions)
+              .where(and(eq(pendingDeletions.chatId, chatId), eq(pendingDeletions.messageId, sent.message_id)))
+              .run();
+          } catch (_) {}
+        }, delaySeconds * 1000);
+      }
+    }
+
+    if (userMsgId) {
+      await queueMessageDeletion(chatId, userMsgId, delaySeconds);
+      if (typeof setTimeout !== 'undefined') {
+        setTimeout(async () => {
+          try {
+            await api.deleteMessage({ chat_id: chatId, message_id: userMsgId });
+            await db
+              .delete(pendingDeletions)
+              .where(and(eq(pendingDeletions.chatId, chatId), eq(pendingDeletions.messageId, userMsgId)))
+              .run();
+          } catch (_) {}
+        }, delaySeconds * 1000);
+      }
+    }
+  }
+  return sent;
 }

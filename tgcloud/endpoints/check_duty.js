@@ -1,7 +1,10 @@
 import { api } from 'sdk';
-import { getAllGroups, getMembers, checkAndAnnounceDuty } from '../lib/db-service.js';
+import { getAllGroups, getMembers, checkAndAnnounceDuty, cleanupPendingDeletions } from '../lib/db-service.js';
 
 export default async function (input, ctx) {
+  // Sweep expired messages (older than 2 minutes)
+  const deleted = await cleanupPendingDeletions(api);
+
   const groupsList = await getAllGroups();
   const announced = [];
   for (const grp of groupsList) {
@@ -13,5 +16,5 @@ export default async function (input, ctx) {
       console.warn(`Could not check duty for group ${grp?.id}:`, err?.message || err);
     }
   }
-  return { ok: true, announcedCount: announced.length, announced };
+  return { ok: true, deleted, announcedCount: announced.length, announced };
 }

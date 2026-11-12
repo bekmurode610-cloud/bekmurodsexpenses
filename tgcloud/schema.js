@@ -47,3 +47,12 @@ export const userRoles = table('user_roles', {
   role: text('role').default('normal'), // 'superadmin', 'admin', 'banned', 'normal'
   addedAt: integer('added_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 });
+
+export const pendingDeletions = table('pending_deletions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatId: integer('chat_id').notNull(),
+  messageId: integer('message_id').notNull(),
+  deleteAt: integer('delete_at').notNull(),
+}, (t) => ({
+  deleteAtIdx: index('idx_pending_del_at').on(t.deleteAt),
+}));

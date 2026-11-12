@@ -59,8 +59,11 @@ export function calculateBalances(members, expenses, group = null) {
 
     if (rosterNames && rosterNames.length > 0) {
       const normRoster = new Set(rosterNames.map((n) => normalizeName(n)));
+      const seenNames = new Set();
       for (const m of members) {
-        if (normRoster.has(normalizeName(m.name))) {
+        const norm = normalizeName(m.name);
+        if (normRoster.has(norm) && !seenNames.has(norm)) {
+          seenNames.add(norm);
           splittersIds.add(Number(m.telegramId));
         }
       }
@@ -68,8 +71,13 @@ export function calculateBalances(members, expenses, group = null) {
 
     // Fallback: if no official roster or no registered member matched roster, use all group members
     if (splittersIds.size === 0) {
+      const seenNames = new Set();
       for (const m of members) {
-        splittersIds.add(Number(m.telegramId));
+        const norm = normalizeName(m.name);
+        if (!seenNames.has(norm)) {
+          seenNames.add(norm);
+          splittersIds.add(Number(m.telegramId));
+        }
       }
     }
 
@@ -154,7 +162,25 @@ export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0, isTodayDone
 
 export function formatMinimalDutyNotification(person, dateLabel = null, isDone = false) {
   const dt = dateLabel || formatUzDate();
-  return isDone ? `Navbatchi (${dt}): ${person} (Done)` : `Navbatchi (${dt}): ${person}`;
+  const header = isDone ? `Navbatchi (${dt}): ${person} (Done)` : `Navbatchi (${dt}): ${person}`;
+  return `${header}\n\nVazifalar:\n• Suv\n• Musur to'kish\n• Dasturxonni qoqish`;
+}
+
+export function getDutyAdminKeyboard(isDone) {
+  if (isDone) {
+    return {
+      inline_keyboard: [[{ text: 'Undo', callback_data: 'duty_undone' }]],
+    };
+  }
+  return {
+    inline_keyboard: [
+      [
+        { text: '⬅️', callback_data: 'duty_prev' },
+        { text: 'Done', callback_data: 'duty_confirm' },
+        { text: '➡️', callback_data: 'duty_next' },
+      ],
+    ],
+  };
 }
 
 export function getDutySchedule(group, members, daysCount = 7) {
