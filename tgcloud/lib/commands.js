@@ -7,14 +7,13 @@ export const USER_COMMANDS = [
 ];
 
 export const ADMIN_COMMANDS = [
+  { command: 'expenses', description: "Yaqindagi xarajatlar" },
+  { command: 'duty', description: "Bugungi navbatchi va boshqaruv" },
+  { command: 'detail', description: "To'liq hisobot" },
+  { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'setmembers', description: "Xarajat a'zolarini belgilash" },
   { command: 'setduty', description: "Navbatchilarni kiritish" },
   { command: 'setdutytime', description: "Eslatma vaqtini sozlash (UZT)" },
-  { command: 'duty', description: "Navbatchi va boshqaruv (/duty manage)" },
-  { command: 'dutyswap', description: "Navbatchilar o'rnini almashtirish" },
-  { command: 'expenses', description: "Yaqindagi xarajatlar" },
-  { command: 'detail', description: "To'liq hisobot" },
-  { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'settle', description: "Qarzlarni nollash" },
   { command: 'reset', description: "Xarajatlarni o'chirish" },
   { command: 'help', description: "Qo'llanma" },
@@ -26,19 +25,16 @@ export const PRIVATE_COMMANDS = [
 ];
 
 export async function setupBotCommands(api) {
-  // 1. Group regular members: restricted to user commands
   await api.setMyCommands({
     commands: USER_COMMANDS,
     scope: { type: 'all_group_chats' },
   });
 
-  // 2. Group administrators: full access to admin commands
   await api.setMyCommands({
     commands: ADMIN_COMMANDS,
     scope: { type: 'all_chat_administrators' },
   });
 
-  // 3. Private chats: basic commands
   await api.setMyCommands({
     commands: PRIVATE_COMMANDS,
     scope: { type: 'all_private_chats' },

@@ -6,18 +6,34 @@ import {
   resetGroup,
   getMembers,
   getGroup,
-  shiftGroupDutyOffset,
   setGroupDutyOffset,
   setGroupLastDutyDoneDate,
 } from '../lib/db-service.js';
 import {
   getDutyRosterList,
-  getDutyPerson,
+  getActiveDutyPerson,
   formatUzDate,
   formatMinimalDutyNotification,
   getUztTimeInfo,
 } from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
+
+export function getDutyAdminKeyboard(isDone) {
+  if (isDone) {
+    return {
+      inline_keyboard: [[{ text: 'Undo', callback_data: 'duty_undone' }]],
+    };
+  }
+  return {
+    inline_keyboard: [
+      [
+        { text: '⬅️', callback_data: 'duty_prev' },
+        { text: 'Done', callback_data: 'duty_confirm' },
+        { text: '➡️', callback_data: 'duty_next' },
+      ],
+    ],
+  };
+}
 
 export default async function (callbackQuery, ctx) {
   if (!callbackQuery) return;
@@ -38,7 +54,7 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Action canceled.',
+      text: 'Bekor qilindi.',
     });
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
@@ -50,7 +66,7 @@ export default async function (callbackQuery, ctx) {
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only admin can confirm duty.',
+        text: 'Faqat admin tasdiqlashi mumkin.',
         show_alert: true,
       });
       return;
@@ -61,35 +77,50 @@ export default async function (callbackQuery, ctx) {
     const mems = await getMembers(chatId);
     const roster = getDutyRosterList(grp, mems);
     if (!roster || roster.length === 0) {
-      await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Roster empty' });
+      await api.answerCallbackQuery({ callback_query_id: cbId, text: "Ro'yxat bo'sh" });
       return;
     }
 
     const k = roster.length;
     const currentOffset = grp?.dutyOffset || 0;
+    const dateLabel = formatUzDate(nowUzt);
+
+    // Guard against double confirmation on the same day
+    if (grp?.lastDutyDoneDate === dateStr) {
+      const donePerson = getActiveDutyPerson(roster, currentOffset, true);
+      await api.editMessageText({
+        chat_id: chatId,
+        message_id: messageId,
+        text: formatMinimalDutyNotification(donePerson, dateLabel, true),
+        reply_markup: getDutyAdminKeyboard(true),
+      });
+      await api.answerCallbackQuery({
+        callback_query_id: cbId,
+        text: 'Bugungi navbatchilik allaqachon tasdiqlangan.',
+      });
+      return;
+    }
+
     const person = roster[((currentOffset % k) + k) % k];
 
     // 1. Mark done for today
     await setGroupLastDutyDoneDate(chatId, dateStr);
 
-    // 2. Advance rotation to the next person!
+    // 2. Advance rotation to the next person
     const nextOffset = (currentOffset + 1) % k;
     await setGroupDutyOffset(chatId, nextOffset);
 
-    // 3. Edit message in-place with date and provide an Undo button
-    const dateLabel = formatUzDate(nowUzt);
+    // 3. Edit message in-place with Undo button
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
       text: formatMinimalDutyNotification(person, dateLabel, true),
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Undo', callback_data: 'duty_undone' }]],
-      },
+      reply_markup: getDutyAdminKeyboard(true),
     });
 
     await api.answerCallbackQuery({
       callback_query_id: cbId,
-      text: `Bajarildi. Keyingi navbat: ${roster[nextOffset]}`,
+      text: `Bajarildi! Keyingi: ${roster[nextOffset]}`,
     });
     return;
   }
@@ -100,7 +131,7 @@ export default async function (callbackQuery, ctx) {
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only admin can undo duty confirmation.',
+        text: 'Faqat admin bekor qilishi mumkin.',
         show_alert: true,
       });
       return;
@@ -111,43 +142,45 @@ export default async function (callbackQuery, ctx) {
     const mems = await getMembers(chatId);
     const roster = getDutyRosterList(grp, mems);
     if (!roster || roster.length === 0) {
-      await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Roster empty' });
+      await api.answerCallbackQuery({ callback_query_id: cbId, text: "Ro'yxat bo'sh" });
       return;
     }
 
     const k = roster.length;
     const currentOffset = grp?.dutyOffset || 0;
-    // Step back to the person who was confirmed
-    const prevOffset = ((currentOffset - 1) % k + k) % k;
-    await setGroupDutyOffset(chatId, prevOffset);
-    await setGroupLastDutyDoneDate(chatId, null);
-
-    const person = roster[prevOffset];
     const dateLabel = formatUzDate(nowUzt);
+
+    // Guard against double-undo if today wasn't marked done
+    let targetOffset = ((currentOffset % k) + k) % k;
+    if (grp?.lastDutyDoneDate === dateStr) {
+      targetOffset = ((currentOffset - 1) % k + k) % k;
+      await setGroupDutyOffset(chatId, targetOffset);
+      await setGroupLastDutyDoneDate(chatId, null);
+    }
+
+    const person = roster[targetOffset];
 
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
       text: formatMinimalDutyNotification(person, dateLabel, false),
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
-      },
+      reply_markup: getDutyAdminKeyboard(false),
     });
 
     await api.answerCallbackQuery({
       callback_query_id: cbId,
-      text: `Done bekor qilindi. Navbatchi yana: ${person}`,
+      text: `Bekor qilindi. Navbatchi: ${person}`,
     });
     return;
   }
 
-  // Admin skipping/shifting duty
-  if (data === 'duty_next') {
+  // Admin shifting duty backward or forward
+  if (data === 'duty_next' || data === 'duty_prev') {
     const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only admin can change duty.',
+        text: "Faqat admin navbatni o'zgartirishi mumkin.",
         show_alert: true,
       });
       return;
@@ -157,24 +190,26 @@ export default async function (callbackQuery, ctx) {
     const mems = await getMembers(chatId);
     const roster = getDutyRosterList(grp, mems);
     if (!roster || roster.length === 0) return;
+
     const k = roster.length;
     const current = grp?.dutyOffset || 0;
-    const nextOffset = (current + 1) % k;
-    await setGroupDutyOffset(chatId, nextOffset);
+    const delta = data === 'duty_next' ? 1 : -1;
+    const newOffset = ((current + delta) % k + k) % k;
+
+    await setGroupDutyOffset(chatId, newOffset);
+    await setGroupLastDutyDoneDate(chatId, null);
 
     const { nowUzt } = getUztTimeInfo();
-    const person = roster[nextOffset];
+    const person = roster[newOffset];
     const dateLabel = formatUzDate(nowUzt);
 
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
       text: formatMinimalDutyNotification(person, dateLabel, false),
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Done', callback_data: 'duty_confirm' }]],
-      },
+      reply_markup: getDutyAdminKeyboard(false),
     });
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: `Shifted to ${person}` });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: `Navbatchi: ${person}` });
     return;
   }
 
@@ -186,7 +221,7 @@ export default async function (callbackQuery, ctx) {
       await api.editMessageText({
         chat_id: chatId,
         message_id: messageId,
-        text: 'Expense not found or already deleted.',
+        text: "Xarajat topilmadi yoki allaqachon o'chirilgan.",
       });
       await api.answerCallbackQuery({ callback_query_id: cbId });
       return;
@@ -196,7 +231,7 @@ export default async function (callbackQuery, ctx) {
     if (expense.payerId !== userId && !isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'You are not authorized to delete this.',
+        text: "Faqat o'z xarajatingizni o'chira olasiz.",
         show_alert: true,
       });
       return;
@@ -206,9 +241,9 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Expense deleted.',
+      text: "Xarajat o'chirildi.",
     });
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Expense deleted.' });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: "O'chirildi" });
     return;
   }
 
@@ -217,7 +252,7 @@ export default async function (callbackQuery, ctx) {
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only group admins can settle debts.',
+        text: 'Faqat admin qarzlarni nollashi mumkin.',
         show_alert: true,
       });
       return;
@@ -227,9 +262,9 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'All debts marked as settled. Current balance is now 0.',
+      text: 'Barcha hisob-kitoblar nollandi (yangi davr boshlandi).',
     });
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Settled!' });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Nollandi!' });
     return;
   }
 
@@ -238,7 +273,7 @@ export default async function (callbackQuery, ctx) {
     if (!isAdmin) {
       await api.answerCallbackQuery({
         callback_query_id: cbId,
-        text: 'Only group admins can reset the group.',
+        text: "Faqat admin xarajatlarni o'chirishi mumkin.",
         show_alert: true,
       });
       return;
@@ -248,9 +283,9 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'All expense records for this group have been deleted.',
+      text: "Barcha xarajatlar butunlay o'chirildi.",
     });
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Group reset.' });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: "O'chirildi!" });
     return;
   }
 
