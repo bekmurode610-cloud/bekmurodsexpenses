@@ -943,7 +943,7 @@ export default async function (message, ctx) {
             }
           }
 
-          resp += '\n💳 9860080393751393\nShahboz Abdusattarov\n';
+          resp += '\nTo\'lov uchun (Pay to):\n💳 9860080393751393\nShahboz Abdusattarov\n';
         }
         resp += '\n';
       }
