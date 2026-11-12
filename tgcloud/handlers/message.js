@@ -943,15 +943,7 @@ export default async function (message, ctx) {
             }
           }
 
-          const settlements = calculateSettlements(balances);
-          if (settlements.length > 0) {
-            resp += '\nSettlements:\n';
-            for (const s of settlements) {
-              const debtor = memberMap.get(s.debtorId) || 'Unknown';
-              const creditor = memberMap.get(s.creditorId) || 'Unknown';
-              resp += `${debtor} -> ${creditor}: ${formatMoney(s.amount, cur)}\n`;
-            }
-          }
+          resp += '\n💳 9860080393751393\nShahboz Abdusattarov\n';
         }
         resp += '\n';
       }
