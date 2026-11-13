@@ -3,7 +3,13 @@ name: Automatic Duty Check & Auto-Delete Sweeper
 on:
   schedule:
     - cron: '*/5 * * * *'
+  push:
+    branches: [ main ]
   workflow_dispatch:
+
+concurrency:
+  group: tgcloud-duty-sweeper
+  cancel-in-progress: false
 
 jobs:
   check-duty:
@@ -21,7 +27,9 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg' }}
         run: |
-          END=$((SECONDS+260))
+          mkdir -p .tgcloud
+          echo '{"token":"app8656629226:blHgEYOBi0Er20flQs7SJ7WtCl0WF_YkincshYVindg"}' > .tgcloud/credentials
+          END=$((SECONDS+18000))
           while [ $SECONDS -lt $END ]; do
             npx --yes @tgcloud/cli run endpoints/check_duty '{}' || true
             sleep 20

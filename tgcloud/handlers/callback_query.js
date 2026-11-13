@@ -9,6 +9,7 @@ import {
   setGroupDutyOffset,
   setGroupLastDutyDoneDate,
   touchMessageDeletion,
+  cancelMessageDeletion,
   cleanupPendingDeletions,
 } from '../lib/db-service.js';
 import {
@@ -55,8 +56,8 @@ export default async function (callbackQuery, ctx) {
     return;
   }
 
-  // Refresh 2-minute timer on interaction with message in group chat
-  if (chatId < 0) {
+  // Refresh 2-minute timer on non-duty interaction with message in group chat
+  if (chatId < 0 && !data?.startsWith('duty_')) {
     await touchMessageDeletion(chatId, messageId, 120);
   }
 
@@ -104,6 +105,9 @@ export default async function (callbackQuery, ctx) {
         text: formatMinimalDutyNotification(donePerson, dateLabel, true),
         reply_markup: getDutyAdminKeyboard(true),
       });
+      if (chatId < 0) {
+        await touchMessageDeletion(chatId, messageId, 300);
+      }
       await api.answerCallbackQuery({
         callback_query_id: cbId,
         text: 'Bugungi navbatchilik allaqachon tasdiqlangan.',
@@ -120,13 +124,16 @@ export default async function (callbackQuery, ctx) {
     const nextOffset = (currentOffset + 1) % k;
     await setGroupDutyOffset(chatId, nextOffset);
 
-    // 3. Edit message in-place with Undo button
+    // 3. Edit message in-place with Undo button & schedule 5-minute deletion
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
       text: formatMinimalDutyNotification(person, dateLabel, true),
       reply_markup: getDutyAdminKeyboard(true),
     });
+    if (chatId < 0) {
+      await touchMessageDeletion(chatId, messageId, 300);
+    }
 
     await api.answerCallbackQuery({
       callback_query_id: cbId,
@@ -176,6 +183,9 @@ export default async function (callbackQuery, ctx) {
       text: formatMinimalDutyNotification(person, dateLabel, false),
       reply_markup: getDutyAdminKeyboard(false),
     });
+    if (chatId < 0) {
+      await cancelMessageDeletion(chatId, messageId);
+    }
 
     await api.answerCallbackQuery({
       callback_query_id: cbId,
@@ -219,6 +229,9 @@ export default async function (callbackQuery, ctx) {
       text: formatMinimalDutyNotification(person, dateLabel, false),
       reply_markup: getDutyAdminKeyboard(false),
     });
+    if (chatId < 0) {
+      await cancelMessageDeletion(chatId, messageId);
+    }
     await api.answerCallbackQuery({ callback_query_id: cbId, text: `Navbatchi: ${person}` });
     return;
   }

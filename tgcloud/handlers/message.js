@@ -16,6 +16,7 @@ import {
   checkAndAnnounceDuty,
   sendAutoDeleteMessage,
   cleanupPendingDeletions,
+  queueMessageDeletion,
 } from '../lib/db-service.js';
 import {
   calculateBalances,
@@ -110,14 +111,23 @@ export default async function (message, ctx) {
   const isStarExpense = text.startsWith('*');
   const isCommand = text.startsWith('/');
 
-  // Passive daily duty check if not yet announced today
-  const currentGroup = await getGroup(chatId);
-  if (currentGroup) {
-    const { dateStr, timeStr } = getUztTimeInfo();
-    const scheduledTime = currentGroup.dutyTime || '09:00';
-    if (timeStr >= scheduledTime && currentGroup.lastDutyDate !== dateStr) {
-      const currentMembers = await getMembers(chatId);
-      await checkAndAnnounceDuty(api, currentGroup, currentMembers);
+  // Passive daily duty check if not yet announced today (skip for duty configuration/trigger commands)
+  const lowerText = text.toLowerCase();
+  const isDutyCommand =
+    lowerText.startsWith('/setdutytime') ||
+    lowerText.startsWith('/setduty') ||
+    lowerText.startsWith('/duty') ||
+    lowerText.startsWith('/navbatchi');
+
+  if (!isDutyCommand) {
+    const currentGroup = await getGroup(chatId);
+    if (currentGroup) {
+      const { dateStr, timeStr } = getUztTimeInfo();
+      const scheduledTime = currentGroup.dutyTime || '09:00';
+      if (timeStr >= scheduledTime && currentGroup.lastDutyDate !== dateStr) {
+        const currentMembers = await getMembers(chatId);
+        await checkAndAnnounceDuty(api, currentGroup, currentMembers);
+      }
     }
   }
 
@@ -406,11 +416,19 @@ export default async function (message, ctx) {
 
       const reply_markup = isAdmin ? getDutyAdminKeyboard(isDone) : undefined;
 
-      await sendReply({
+      if (chatId < 0 && message.message_id) {
+        await queueMessageDeletion(chatId, message.message_id, 120);
+      }
+      const dutyMsgParams = {
         chat_id: chatId,
         text: formatMinimalDutyNotification(activePerson, dateLabel, isDone),
         reply_markup,
-      });
+      };
+      if (isDone) {
+        await sendAutoDeleteMessage(api, chatId, dutyMsgParams, null, 300);
+      } else {
+        await api.sendMessage(dutyMsgParams);
+      }
       break;
     }
 

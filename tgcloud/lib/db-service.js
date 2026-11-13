@@ -134,7 +134,11 @@ export async function checkAndAnnounceDuty(api, group, members, force = false) {
           text: formatMinimalDutyNotification(person, dateLabel, isDone),
           reply_markup: getDutyAdminKeyboard(isDone),
         };
-        await sendAutoDeleteMessage(api, group.id, msgParams);
+        if (isDone) {
+          await sendAutoDeleteMessage(api, group.id, msgParams, null, 300);
+        } else {
+          await api.sendMessage(msgParams);
+        }
         await setGroupLastDutyDate(group.id, dateStr);
         return true;
       } catch (err) {
@@ -380,6 +384,14 @@ export async function touchMessageDeletion(chatId, messageId, delaySeconds = 120
       })
       .run();
   }
+}
+
+export async function cancelMessageDeletion(chatId, messageId) {
+  if (!chatId || !messageId) return;
+  await db
+    .delete(pendingDeletions)
+    .where(and(eq(pendingDeletions.chatId, chatId), eq(pendingDeletions.messageId, messageId)))
+    .run();
 }
 
 export async function cleanupPendingDeletions(api) {
