@@ -35,25 +35,41 @@ import { formatMoney } from './format.js';
 import { isCreatorOrAdmin } from './auth.js';
 
 const CONTROLLABLE_COMMANDS = [
-  { key: '/duty', label: '/duty (Navbatchi)' },
-  { key: '/detail', label: '/detail (Hisobot)' },
-  { key: '/expenses', label: '/expenses (Xarajatlar)' },
-  { key: '/members', label: "/members (A'zolar)" },
-  { key: '/delete', label: "/delete (O'chirish)" },
-  { key: '/settle', label: '/settle (Nollash)' },
-  { key: '/reset', label: '/reset (Tozalash)' },
-  { key: '/setduty', label: '/setduty (Navbat sozlash)' },
-  { key: '/setdutytime', label: '/setdutytime (Vaqt sozlash)' },
-  { key: '/setmembers', label: "/setmembers (A'zo kiritish)" },
-  { key: '/help', label: "/help (Qo'llanma)" },
-  { key: '*', label: '* (Xarajat yozish)' },
+  { key: '/duty', label: '/duty' },
+  { key: '/detail', label: '/detail' },
+  { key: '/expenses', label: '/expenses' },
+  { key: '/members', label: '/members' },
+  { key: '/delete', label: '/delete' },
+  { key: '/settle', label: '/settle' },
+  { key: '/reset', label: '/reset' },
+  { key: '/setduty', label: '/setduty' },
+  { key: '/setdutytime', label: '/setdutytime' },
+  { key: '/setmembers', label: '/setmembers' },
+  { key: '/help', label: '/help' },
+  { key: '*', label: '* (Xarajat)' },
 ];
 
+const GEN_TIMER_CYCLE = [0, 60, 120, 300, 600];
+const PEND_TIMER_CYCLE = [0, 120, 300];
+const DONE_TIMER_CYCLE = [60, 120, 300, 600, 0];
+
+function nextInCycle(arr, current) {
+  const idx = arr.indexOf(Number(current));
+  return arr[(idx + 1) % arr.length];
+}
+
 function formatDuration(sec) {
-  if (!sec || sec <= 0) return "O'chirilmaydi (Off)";
-  if (sec < 60) return `${sec} soniya`;
-  const mins = Math.round(sec / 60);
-  return `${mins} daqiqa`;
+  if (!sec || sec <= 0) return "O'chmaydi";
+  if (sec < 60) return `${sec} son`;
+  return `${Math.round(sec / 60)} daq`;
+}
+
+function chunkButtons(items, perRow = 2) {
+  const rows = [];
+  for (let i = 0; i < items.length; i += perRow) {
+    rows.push(items.slice(i, i + perRow));
+  }
+  return rows;
 }
 
 async function editOrSend(api, chatId, messageId, text, replyMarkup) {
@@ -98,7 +114,7 @@ async function resolveAdminContext(api, userId, username) {
 }
 
 function getBackKeyboard(target = 'adm:home') {
-  return { inline_keyboard: [[{ text: '⬅️ Orqaga', callback_data: target }]] };
+  return { inline_keyboard: [[{ text: '← Orqaga', callback_data: target }]] };
 }
 
 async function renderHome(api, chatId, messageId, ctxData, notice = '') {
@@ -108,27 +124,27 @@ async function renderHome(api, chatId, messageId, ctxData, notice = '') {
   const isDone = grp.lastDutyDoneDate === dateStr;
   const person = getActiveDutyPerson(roster, grp.dutyOffset || 0, isDone) || 'Belgilanmagan';
 
-  const statusText = isDone ? '✅ Bajarilgan (Done)' : '⏳ Kutilmoqda (Pending)';
-  const autoText = settings.autoDutyEnabled ? `🔔 Yoqilgan (${grp.dutyTime || '09:00'} UZT)` : "🔕 O'chirilgan";
+  const statusText = isDone ? 'Bajarildi' : 'Kutilmoqda';
+  const autoText = settings.autoDutyEnabled ? `${grp.dutyTime || '09:00'}` : "O'chirilgan";
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `⚙️ BOT BOSHQARUV PANELI\n\n`;
-  text += `🏢 Guruh: ${grp.groupName || grp.id}\n`;
-  text += `🧹 Bugungi navbatchi: ${person} (${statusText})\n`;
-  text += `⏰ Avto-eslatma: ${autoText}\n`;
-  text += `🚫 O'chirilgan buyruqlar: ${settings.disabledCommands.length} ta\n`;
-  text += `⏱️ Xabar o'chirish: Umumiy ${formatDuration(settings.generalDeleteSeconds)} | Done ${formatDuration(settings.doneDutyDeleteSeconds)}\n\n`;
-  text += `Boshqarish uchun bo'limni tanlang:`;
+  text += `${grp.groupName || grp.id}\n\n`;
+  text += `Navbatchi: ${person} · ${statusText}\n`;
+  text += `Avto-eslatma: ${autoText}`;
 
   const rows = [
-    [{ text: '🧹 Navbatchilik (Duty) Boshqaruvi', callback_data: 'adm:duty' }],
-    [{ text: '🎛️ Buyruqlar (Yoqish / O\'chirish / Huquqlar)', callback_data: 'adm:cmds' }],
-    [{ text: "⏱️ Avto-o'chirish (Timer) Sozlamalari", callback_data: 'adm:timers' }],
-    [{ text: "👥 Xarajat A'zolari va Karta", callback_data: 'adm:mems' }],
-    [{ text: '💰 Xarajatlar va Hisobot', callback_data: 'adm:exps' }],
+    [
+      { text: 'Navbatchilik', callback_data: 'adm:duty' },
+      { text: 'Xarajatlar', callback_data: 'adm:exps' },
+    ],
+    [
+      { text: 'Buyruqlar', callback_data: 'adm:cmds' },
+      { text: "A'zolar", callback_data: 'adm:mems' },
+    ],
+    [{ text: 'Taymerlar', callback_data: 'adm:timers' }],
   ];
   if (allGroups.length > 1) {
-    rows.push([{ text: '🔄 Guruhni almashtirish', callback_data: 'adm:groups' }]);
+    rows[2].push({ text: 'Guruhlar', callback_data: 'adm:groups' });
   }
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -138,16 +154,16 @@ async function renderGroups(api, chatId, messageId, ctxData) {
   const { allGroups, grp } = ctxData;
   const rows = [];
   allGroups.forEach((g) => {
-    const active = g.id === grp.id ? '✅ ' : '';
+    const active = g.id === grp.id ? '• ' : '';
     const row = [{ text: `${active}${g.groupName || g.id}`, callback_data: `adm:grp:${g.id}` }];
     if (allGroups.length > 1) {
-      row.push({ text: '🗑️', callback_data: `adm:gdel:${g.id}` });
+      row.push({ text: '×', callback_data: `adm:gdel:${g.id}` });
     }
     rows.push(row);
   });
-  rows.push([{ text: '⬅️ Orqaga', callback_data: 'adm:home' }]);
+  rows.push([{ text: '← Orqaga', callback_data: 'adm:home' }]);
 
-  await editOrSend(api, chatId, messageId, '🔄 Boshqariladigan guruhni tanlang (yoki ortiqchasini 🗑️ o\'chiring):', { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, 'Guruhni tanlang', { inline_keyboard: rows });
 }
 
 async function renderDutyMenu(api, chatId, messageId, ctxData, notice = '') {
@@ -156,28 +172,28 @@ async function renderDutyMenu(api, chatId, messageId, ctxData, notice = '') {
   const { dateStr, nowUzt } = getUztTimeInfo();
   const isDone = grp.lastDutyDoneDate === dateStr;
   const person = getActiveDutyPerson(roster, grp.dutyOffset || 0, isDone) || 'Belgilanmagan';
-  const autoLabel = settings.autoDutyEnabled ? '🔔 Yoqilgan' : "🔕 O'chirilgan";
+  const autoLabel = settings.autoDutyEnabled ? `${grp.dutyTime || '09:00'}` : "O'chirilgan";
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `🧹 NAVBATCHILIK BOSHQARUVI\n\n`;
-  text += `📅 Sana: ${formatUzDate(nowUzt)}\n`;
-  text += `👤 Bugungi navbatchi: ${person}\n`;
-  text += `📌 Holat: ${isDone ? '✅ Bajarildi' : '⏳ Kutilmoqda'}\n`;
-  text += `⏰ Avto-eslatma: ${autoLabel} — ${grp.dutyTime || '09:00'} UZT\n`;
-  text += `👥 Ro'yxat (${roster.length} kishi): ${roster.join(' → ') || "Bo'sh"}\n`;
-  text += `📝 Vazifalar (${settings.dutyTasks.length} ta): ${settings.dutyTasks.join(', ')}`;
+  text += `Navbatchilik · ${formatUzDate(nowUzt)}\n\n`;
+  text += `Bugun: ${person} (${isDone ? 'Bajarildi' : 'Kutilmoqda'})\n`;
+  text += `Eslatma: ${autoLabel}\n`;
+  text += `Vazifalar: ${settings.dutyTasks.join(', ') || 'Belgilanmagan'}`;
 
-  const actionRow = isDone
-    ? [{ text: '↩️ Bekor qilish (Undo)', callback_data: 'adm:d_undo' }]
-    : [{ text: '✅ Bajarildi (Done)', callback_data: 'adm:d_done' }];
+  const toggleBtn = isDone
+    ? { text: '↩ Bekor qilish', callback_data: 'adm:d_undo' }
+    : { text: '✓ Bajarildi', callback_data: 'adm:d_done' };
 
   const rows = [
-    actionRow,
-    [{ text: '📢 Hozir guruhga yuborish', callback_data: 'adm:d_send' }],
-    [{ text: "👥 Odam qo'shish / o'chirish / tartib", callback_data: 'adm:d_roster' }],
-    [{ text: '📝 Vazifalarni tahrirlash', callback_data: 'adm:d_tasks' }],
-    [{ text: `⏰ Vaqt (${grp.dutyTime || '09:00'}) va Avto-yuborish`, callback_data: 'adm:d_time' }],
-    [{ text: '⬅️ Bosh menyu', callback_data: 'adm:home' }],
+    [toggleBtn, { text: 'Guruhga yuborish', callback_data: 'adm:d_send' }],
+    [
+      { text: `Navbat (${roster.length})`, callback_data: 'adm:d_roster' },
+      { text: `Vazifalar (${settings.dutyTasks.length})`, callback_data: 'adm:d_tasks' },
+    ],
+    [
+      { text: `Vaqt: ${grp.dutyTime || '09:00'}`, callback_data: 'adm:d_time' },
+      { text: '← Orqaga', callback_data: 'adm:home' },
+    ],
   ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -192,30 +208,23 @@ async function renderDutyRoster(api, chatId, messageId, ctxData, notice = '') {
   const activeIdx = isDone
     ? ((((grp.dutyOffset || 0) - 1) % k) + k) % k
     : (((grp.dutyOffset || 0) % k) + k) % k;
+  const currentPerson = roster[activeIdx] || 'Belgilanmagan';
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `👥 NAVBATCHILAR RO'YXATI\n\n`;
-  if (roster.length === 0) {
-    text += "Ro'yxat bo'sh.\n";
-  } else {
-    roster.forEach((name, idx) => {
-      const marker = idx === activeIdx ? (isDone ? ' ✅' : ' 👈 Navbat') : '';
-      text += `${idx + 1}. ${name}${marker}\n`;
-    });
-  }
-  text += `\n🎯 Ismga bosing — bugungi navbatchi qilish.\n⬆️ ⬇️ — o'rin almashtirish, 🗑️ — o'chirish.`;
+  text += `Navbatchilar tartibi\n\n`;
+  text += `Bugun: ${currentPerson} (${isDone ? 'Bajarildi' : 'Kutilmoqda'})`;
 
   const rows = [];
   roster.forEach((name, i) => {
     const shortName = name.length > 16 ? `${name.slice(0, 15)}…` : name;
-    const row = [{ text: `${i === activeIdx ? '🎯 ' : ''}${i + 1}. ${shortName}`, callback_data: `adm:d_act:${i}` }];
-    if (i > 0) row.push({ text: '⬆️', callback_data: `adm:d_up:${i}` });
-    if (i < roster.length - 1) row.push({ text: '⬇️', callback_data: `adm:d_dn:${i}` });
-    row.push({ text: '🗑️', callback_data: `adm:d_rm:${i}` });
+    const prefix = i === activeIdx ? '• ' : '';
+    const row = [{ text: `${prefix}${i + 1}. ${shortName}`, callback_data: `adm:d_act:${i}` }];
+    if (i > 0) row.push({ text: '↑', callback_data: `adm:d_up:${i}` });
+    if (i < roster.length - 1) row.push({ text: '↓', callback_data: `adm:d_dn:${i}` });
+    row.push({ text: '×', callback_data: `adm:d_rm:${i}` });
     rows.push(row);
   });
 
-  // Quick-add buttons for known group members missing from duty roster
   const normRoster = new Set(roster.map((n) => normalizeName(n)));
   const seenCandidates = new Set();
   const candidates = [];
@@ -226,12 +235,16 @@ async function renderDutyRoster(api, chatId, messageId, ctxData, notice = '') {
       candidates.push(m.name);
     }
   });
-  candidates.slice(0, 4).forEach((cand, idx) => {
-    rows.push([{ text: `➕ Tez qo'shish: ${cand}`, callback_data: `adm:d_qadd:${idx}` }]);
-  });
+  const quickButtons = candidates.slice(0, 4).map((cand, idx) => ({
+    text: `+ ${cand}`,
+    callback_data: `adm:d_qadd:${idx}`,
+  }));
+  rows.push(...chunkButtons(quickButtons, 2));
 
-  rows.push([{ text: "➕ Yangi username / ism qo'shish", callback_data: 'adm:d_add' }]);
-  rows.push([{ text: '⬅️ Orqaga', callback_data: 'adm:duty' }]);
+  rows.push([
+    { text: "+ Yangi odam", callback_data: 'adm:d_add' },
+    { text: '← Orqaga', callback_data: 'adm:duty' },
+  ]);
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
@@ -239,42 +252,45 @@ async function renderDutyRoster(api, chatId, messageId, ctxData, notice = '') {
 async function renderDutyTasks(api, chatId, messageId, ctxData, notice = '') {
   const { settings } = ctxData;
   let text = notice ? `${notice}\n\n` : '';
-  text += `📝 NAVBATCHI VAZIFALARI\n\n`;
-  settings.dutyTasks.forEach((task, i) => {
-    text += `${i + 1}. ${task}\n`;
-  });
-  text += `\nVazifani o'chirish uchun 🗑️ tugmasini bosing yoki yangi vazifa qo'shing.`;
+  text += `Navbatchi vazifalari\n\n`;
+  text += `O'chirish uchun vazifa ustiga bosing.`;
 
-  const rows = settings.dutyTasks.map((task, i) => {
-    const shortTask = task.length > 26 ? `${task.slice(0, 25)}…` : task;
-    return [{ text: `🗑️ ${i + 1}. ${shortTask}`, callback_data: `adm:t_rm:${i}` }];
+  const taskBtns = settings.dutyTasks.map((task, i) => {
+    const shortTask = task.length > 22 ? `${task.slice(0, 21)}…` : task;
+    return { text: `× ${shortTask}`, callback_data: `adm:t_rm:${i}` };
   });
-
-  rows.push([{ text: "➕ Vazifa qo'shish", callback_data: 'adm:t_add' }]);
-  rows.push([{ text: "✏️ Hammasini boshqatdan yozish", callback_data: 'adm:t_set' }]);
-  rows.push([{ text: '🔄 Standart vazifalar', callback_data: 'adm:t_rst' }]);
-  rows.push([{ text: '⬅️ Orqaga', callback_data: 'adm:duty' }]);
+  const rows = [
+    ...chunkButtons(taskBtns, 2),
+    [
+      { text: "+ Qo'shish", callback_data: 'adm:t_add' },
+      { text: 'Yangilash', callback_data: 'adm:t_set' },
+    ],
+    [
+      { text: 'Standart', callback_data: 'adm:t_rst' },
+      { text: '← Orqaga', callback_data: 'adm:duty' },
+    ],
+  ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
 
 async function renderDutyTime(api, chatId, messageId, ctxData, notice = '') {
   const { grp, settings } = ctxData;
-  const autoText = settings.autoDutyEnabled ? '✅ YOQILGAN (ON)' : "🚫 O'CHIRILGAN (OFF)";
+  const autoText = settings.autoDutyEnabled ? 'Yoqilgan' : "O'chirilgan";
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `⏰ AVTOMATIK ESLATMA SOZLAMALARI\n\n`;
-  text += `🔔 Holat: ${autoText}\n`;
-  text += `🕘 Kunlik vaqt: ${grp.dutyTime || '09:00'} (UZT)\n\n`;
-  text += `Tayyor vaqtni tanlang yoki o'zingiz kiriting:`;
+  text += `Eslatma vaqti\n\n`;
+  text += `Vaqt: ${grp.dutyTime || '09:00'} (UZT) · Avto: ${autoText}`;
 
   const presets = ['07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '18:00', '20:00'];
   const rows = [
-    [{ text: settings.autoDutyEnabled ? '🔔 Avto-eslatma: ON (Bosib o\'chirish)' : "🔕 Avto-eslatma: OFF (Bosib yoqish)", callback_data: 'adm:d_auto' }],
-    presets.slice(0, 4).map((t) => ({ text: grp.dutyTime === t ? `✅ ${t}` : t, callback_data: `adm:d_tm:${t}` })),
-    presets.slice(4, 8).map((t) => ({ text: grp.dutyTime === t ? `✅ ${t}` : t, callback_data: `adm:d_tm:${t}` })),
-    [{ text: '✏️ Boshqa vaqt yozish (masalan: 09:30)', callback_data: 'adm:d_tmc' }],
-    [{ text: '⬅️ Orqaga', callback_data: 'adm:duty' }],
+    [{ text: `Avto-eslatma: ${autoText}`, callback_data: 'adm:d_auto' }],
+    presets.slice(0, 4).map((t) => ({ text: grp.dutyTime === t ? `• ${t}` : t, callback_data: `adm:d_tm:${t}` })),
+    presets.slice(4, 8).map((t) => ({ text: grp.dutyTime === t ? `• ${t}` : t, callback_data: `adm:d_tm:${t}` })),
+    [
+      { text: 'Boshqa vaqt', callback_data: 'adm:d_tmc' },
+      { text: '← Orqaga', callback_data: 'adm:duty' },
+    ],
   ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -286,22 +302,23 @@ async function renderCommandsMenu(api, chatId, messageId, ctxData, notice = '') 
   const adminOnly = new Set(settings.adminOnlyCommands);
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `🎛️ BUYRUQLAR VA FUNKSIYALAR BOSHQARUVI\n\n`;
-  text += `Har bir buyruqni butunlay o'chirib qo'yishingiz (🚫) yoki faqat adminlar uchun qilishingiz (🛡️) mumkin:\n`;
-  text += `• ✅ = Ishlaydi  |  🚫 = O'chirilgan (guruhda ishlamaydi)\n`;
-  text += `• 👥 Hammaga  |  🛡️ Faqat Admin`;
+  text += `Buyruqlar boshqaruvi\n\n`;
+  text += `Chap ustun: Yoqish (✓) yoki o'chirish (–)\n`;
+  text += `O'ng ustun: Hamma yoki faqat admin`;
 
   const rows = CONTROLLABLE_COMMANDS.map((item) => {
     const isOff = disabled.has(item.key);
     const isAdminOnly = adminOnly.has(item.key);
     return [
-      { text: `${isOff ? '🚫' : '✅'} ${item.label}`, callback_data: `adm:c_tg:${item.key}` },
-      { text: isAdminOnly ? '🛡️ Faqat Admin' : '👥 Hammaga', callback_data: `adm:c_pm:${item.key}` },
+      { text: `${isOff ? '–' : '✓'} ${item.label}`, callback_data: `adm:c_tg:${item.key}` },
+      { text: isAdminOnly ? 'Faqat admin' : 'Hamma', callback_data: `adm:c_pm:${item.key}` },
     ];
   });
 
-  rows.push([{ text: '✅ Barcha buyruqlarni yoqish', callback_data: 'adm:c_all_on' }]);
-  rows.push([{ text: '⬅️ Bosh menyu', callback_data: 'adm:home' }]);
+  rows.push([
+    { text: 'Barchasini yoqish', callback_data: 'adm:c_all_on' },
+    { text: '← Orqaga', callback_data: 'adm:home' },
+  ]);
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
@@ -309,34 +326,15 @@ async function renderCommandsMenu(api, chatId, messageId, ctxData, notice = '') 
 async function renderTimersMenu(api, chatId, messageId, ctxData, notice = '') {
   const { settings } = ctxData;
   let text = notice ? `${notice}\n\n` : '';
-  text += `⏱️ AVTO-O'CHIRISH (TIMER) SOZLAMALARI\n\n`;
-  text += `1️⃣ Umumiy bot javoblari (/detail, /expenses...): ${formatDuration(settings.generalDeleteSeconds)}\n`;
-  text += `2️⃣ Foydalanuvchi yozgan buyruqni o'chirish: ${settings.deleteUserCommand ? '✅ Ha' : "❌ Yo'q"}\n`;
-  text += `3️⃣ Bajarilmagan (Pending) navbatchi xabari: ${settings.pendingDutyDeleteSeconds === 0 ? "📌 Bajarilguncha o'chmaydi" : formatDuration(settings.pendingDutyDeleteSeconds)}\n`;
-  text += `4️⃣ Bajarilgan (Done) navbatchi xabari: ${formatDuration(settings.doneDutyDeleteSeconds)}`;
-
-  const genOpts = [0, 60, 120, 300, 600];
-  const pendOpts = [0, 120, 300];
-  const doneOpts = [60, 120, 300, 600, 0];
+  text += `Avto-o'chirish vaqtlari\n\n`;
+  text += `O'zgartirish uchun kerakli qatorni bosing.`;
 
   const rows = [
-    [{ text: "— 1. Umumiy xabarlar vaqti —", callback_data: 'adm:noop' }],
-    genOpts.map((s) => ({
-      text: `${settings.generalDeleteSeconds === s ? '✅ ' : ''}${s === 0 ? 'Off' : `${s / 60}m`}`,
-      callback_data: `adm:tm_gen:${s}`,
-    })),
-    [{ text: `2. Buyruq matnini o'chirish: ${settings.deleteUserCommand ? '✅ ON' : '🚫 OFF'}`, callback_data: 'adm:tm_usr' }],
-    [{ text: '— 3. Pending navbatchi xabari —', callback_data: 'adm:noop' }],
-    pendOpts.map((s) => ({
-      text: `${settings.pendingDutyDeleteSeconds === s ? '✅ ' : ''}${s === 0 ? "📌 O'chmasin" : `${s / 60}m`}`,
-      callback_data: `adm:tm_dp:${s}`,
-    })),
-    [{ text: '— 4. Done bosilgandan keyingi vaqt —', callback_data: 'adm:noop' }],
-    doneOpts.map((s) => ({
-      text: `${settings.doneDutyDeleteSeconds === s ? '✅ ' : ''}${s === 0 ? 'Off' : `${s / 60}m`}`,
-      callback_data: `adm:tm_dd:${s}`,
-    })),
-    [{ text: '⬅️ Bosh menyu', callback_data: 'adm:home' }],
+    [{ text: `Bot javoblari: ${formatDuration(settings.generalDeleteSeconds)}`, callback_data: 'adm:tm_gen_c' }],
+    [{ text: `Done xabari: ${formatDuration(settings.doneDutyDeleteSeconds)}`, callback_data: 'adm:tm_dd_c' }],
+    [{ text: `Pending xabari: ${formatDuration(settings.pendingDutyDeleteSeconds)}`, callback_data: 'adm:tm_dp_c' }],
+    [{ text: `Buyruq matni: ${settings.deleteUserCommand ? "O'chiriladi" : 'Qoladi'}`, callback_data: 'adm:tm_usr' }],
+    [{ text: '← Orqaga', callback_data: 'adm:home' }],
   ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -345,23 +343,30 @@ async function renderTimersMenu(api, chatId, messageId, ctxData, notice = '') {
 async function renderMembersMenu(api, chatId, messageId, ctxData, notice = '') {
   const { grp, mems, settings } = ctxData;
   const roster = getExpenseRosterList(grp) || mems.map((m) => m.name);
+  const cardLine = settings.showPaymentInfo
+    ? settings.paymentInfo.replace(/\n+/g, ' · ')
+    : "O'chirilgan";
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `👥 XARAJAT A'ZOLARI VA TO'LOV KARTASI\n\n`;
-  text += `Xarajat bo'linadigan a'zolar (${roster.length} kishi):\n`;
-  roster.forEach((n, i) => {
-    text += `${i + 1}. ${n}\n`;
-  });
-  text += `\n💳 To'lov kartasi (/detail da): ${settings.showPaymentInfo ? '✅ Yoqilgan' : "🚫 O'chirilgan"}\n`;
-  text += `${settings.paymentInfo}`;
+  text += `A'zolar va karta\n\n`;
+  text += `Karta: ${cardLine}\n`;
+  text += `O'chirish uchun ism ustiga bosing.`;
 
-  const rows = roster.map((name, i) => [
-    { text: `🗑️ Olib tashlash: ${name}`, callback_data: `adm:m_rm:${i}` },
-  ]);
-  rows.push([{ text: "➕ A'zo qo'shish", callback_data: 'adm:m_add' }]);
-  rows.push([{ text: settings.showPaymentInfo ? "💳 Karta ko'rsatish: ON" : "💳 Karta ko'rsatish: OFF", callback_data: 'adm:pay_tg' }]);
-  rows.push([{ text: '✏️ Karta ma\'lumotini o\'zgartirish', callback_data: 'adm:pay_ed' }]);
-  rows.push([{ text: '⬅️ Bosh menyu', callback_data: 'adm:home' }]);
+  const memButtons = roster.map((name, i) => ({
+    text: `× ${name}`,
+    callback_data: `adm:m_rm:${i}`,
+  }));
+  const rows = [
+    ...chunkButtons(memButtons, 2),
+    [
+      { text: "+ A'zo qo'shish", callback_data: 'adm:m_add' },
+      { text: settings.showPaymentInfo ? 'Karta: Yoqilgan' : "Karta: O'chirilgan", callback_data: 'adm:pay_tg' },
+    ],
+    [
+      { text: "Kartani o'zgartirish", callback_data: 'adm:pay_ed' },
+      { text: '← Orqaga', callback_data: 'adm:home' },
+    ],
+  ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
@@ -372,19 +377,21 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '') 
   const report = buildDetailReportText(mems, allExpenses, grp);
 
   let text = notice ? `${notice}\n\n` : '';
-  text += `💰 XARAJATLAR VA BALANS\n\n${report}`;
+  text += `${report}`;
   if (text.length > 3900) {
     text = `${text.slice(0, 3880)}\n...`;
   }
 
   const rows = [
-    [{ text: "📋 Xarajatlar ro'yxati va o'chirish", callback_data: 'adm:e_list' }],
-    [{ text: '📢 Hisobotni guruhga yuborish', callback_data: 'adm:e_post' }],
     [
-      { text: '🔄 Nollash (Settle)', callback_data: 'adm:e_settle' },
-      { text: '🗑️ Tozalash (Reset)', callback_data: 'adm:e_reset' },
+      { text: "Ro'yxat / O'chirish", callback_data: 'adm:e_list' },
+      { text: 'Guruhga yuborish', callback_data: 'adm:e_post' },
     ],
-    [{ text: '⬅️ Bosh menyu', callback_data: 'adm:home' }],
+    [
+      { text: 'Nollash (Settle)', callback_data: 'adm:e_settle' },
+      { text: 'Tozalash (Reset)', callback_data: 'adm:e_reset' },
+    ],
+    [{ text: '← Orqaga', callback_data: 'adm:home' }],
   ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -394,23 +401,21 @@ async function renderExpenseList(api, chatId, messageId, ctxData, notice = '') {
   const { grp } = ctxData;
   const recent = await getExpenses(grp.id, { limit: 12, includeSettled: false });
   let text = notice ? `${notice}\n\n` : '';
-  text += `📋 SO'NGGI XARAJATLAR (O'chirish uchun bosing):\n\n`;
+  text += `So'nggi xarajatlar\n\n`;
 
   if (!recent || recent.length === 0) {
-    text += "Hozircha nollanmagan xarajatlar yo'q.";
+    text += "Hozircha xarajatlar yo'q.";
   } else {
-    recent.forEach((exp, idx) => {
-      text += `${idx + 1}. ${exp.payerName}: ${formatMoney(exp.amount, exp.currency)} — ${exp.description} (#${exp.id})\n`;
-    });
+    text += "O'chirish uchun xarajatni bosing.";
   }
 
   const rows = recent.map((exp) => [
     {
-      text: `🗑️ #${exp.id} ${exp.payerName}: ${formatMoney(exp.amount, exp.currency)}`,
+      text: `× #${exp.id} ${exp.payerName} · ${formatMoney(exp.amount, exp.currency)} (${exp.description})`,
       callback_data: `adm:e_del:${exp.id}`,
     },
   ]);
-  rows.push([{ text: '⬅️ Orqaga', callback_data: 'adm:exps' }]);
+  rows.push([{ text: '← Orqaga', callback_data: 'adm:exps' }]);
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
@@ -891,10 +896,37 @@ export async function handleAdminCallback(api, callbackQuery) {
     return;
   }
 
+  if (action === 'tm_gen_c') {
+    const nextVal = nextInCycle(GEN_TIMER_CYCLE, settings.generalDeleteSeconds);
+    await updateGroupSettings(grp.id, { generalDeleteSeconds: nextVal });
+    const refreshed = await resolveAdminContext(api, userId, username);
+    await renderTimersMenu(api, chatId, messageId, refreshed);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'tm_dd_c') {
+    const nextVal = nextInCycle(DONE_TIMER_CYCLE, settings.doneDutyDeleteSeconds);
+    await updateGroupSettings(grp.id, { doneDutyDeleteSeconds: nextVal });
+    const refreshed = await resolveAdminContext(api, userId, username);
+    await renderTimersMenu(api, chatId, messageId, refreshed);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'tm_dp_c') {
+    const nextVal = nextInCycle(PEND_TIMER_CYCLE, settings.pendingDutyDeleteSeconds);
+    await updateGroupSettings(grp.id, { pendingDutyDeleteSeconds: nextVal });
+    const refreshed = await resolveAdminContext(api, userId, username);
+    await renderTimersMenu(api, chatId, messageId, refreshed);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
   if (action === 'tm_gen') {
     await updateGroupSettings(grp.id, { generalDeleteSeconds: parseInt(arg, 10) || 0 });
     const refreshed = await resolveAdminContext(api, userId, username);
-    await renderTimersMenu(api, chatId, messageId, refreshed, '⏱️ Umumiy taymer yangilandi.');
+    await renderTimersMenu(api, chatId, messageId, refreshed);
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
@@ -902,7 +934,7 @@ export async function handleAdminCallback(api, callbackQuery) {
   if (action === 'tm_usr') {
     await updateGroupSettings(grp.id, { deleteUserCommand: !settings.deleteUserCommand });
     const refreshed = await resolveAdminContext(api, userId, username);
-    await renderTimersMenu(api, chatId, messageId, refreshed, '⏱️ Sozlama saqlandi.');
+    await renderTimersMenu(api, chatId, messageId, refreshed);
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
@@ -910,7 +942,7 @@ export async function handleAdminCallback(api, callbackQuery) {
   if (action === 'tm_dp') {
     await updateGroupSettings(grp.id, { pendingDutyDeleteSeconds: parseInt(arg, 10) || 0 });
     const refreshed = await resolveAdminContext(api, userId, username);
-    await renderTimersMenu(api, chatId, messageId, refreshed, '⏱️ Pending navbatchi taymeri yangilandi.');
+    await renderTimersMenu(api, chatId, messageId, refreshed);
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
@@ -918,7 +950,7 @@ export async function handleAdminCallback(api, callbackQuery) {
   if (action === 'tm_dd') {
     await updateGroupSettings(grp.id, { doneDutyDeleteSeconds: parseInt(arg, 10) || 0 });
     const refreshed = await resolveAdminContext(api, userId, username);
-    await renderTimersMenu(api, chatId, messageId, refreshed, '⏱️ Done navbatchi taymeri yangilandi.');
+    await renderTimersMenu(api, chatId, messageId, refreshed);
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
