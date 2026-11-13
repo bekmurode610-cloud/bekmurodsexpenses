@@ -62,7 +62,11 @@ export async function getAdminSession(userId) {
   let row = await db.select().from(adminSessions).where(eq(adminSessions.userId, userId)).get();
   if (!row) {
     const allGroups = await getAllGroups();
-    const defaultGroupId = allGroups.length > 0 ? allGroups[0].id : null;
+    const preferred =
+      allGroups.find((g) => g.id === -1003778975985) ||
+      allGroups.find((g) => (g.groupName || '').toLowerCase().includes("o'zbeklar")) ||
+      allGroups[0];
+    const defaultGroupId = preferred ? preferred.id : null;
     await db
       .insert(adminSessions)
       .values({ userId, groupId: defaultGroupId, awaitingInput: null })
@@ -70,6 +74,30 @@ export async function getAdminSession(userId) {
     row = await db.select().from(adminSessions).where(eq(adminSessions.userId, userId)).get();
   }
   return row;
+}
+
+export async function deleteGroupById(groupId) {
+  await db.delete(members).where(eq(members.groupId, groupId)).run();
+  await db.delete(expenses).where(eq(expenses.groupId, groupId)).run();
+  await db.delete(pendingDeletions).where(eq(pendingDeletions.chatId, groupId)).run();
+  await db.delete(groups).where(eq(groups.id, groupId)).run();
+}
+
+export async function cleanupTrialGroup() {
+  const allGroups = await getAllGroups();
+  const mainGroup = allGroups.find((g) => g.id === -1003778975985);
+  const removed = [];
+  for (const g of allGroups) {
+    const gName = (g.groupName || '').trim().toLowerCase();
+    if (g.id !== -1003778975985 && (gName.includes('trial') || gName === 'group')) {
+      await deleteGroupById(g.id);
+      removed.push({ id: g.id, name: g.groupName });
+    }
+  }
+  if (mainGroup) {
+    await db.update(adminSessions).set({ groupId: mainGroup.id }).run();
+  }
+  return { removed, mainGroupId: mainGroup?.id || null };
 }
 
 export async function setAdminSession(userId, updates) {

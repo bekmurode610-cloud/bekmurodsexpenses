@@ -17,6 +17,7 @@ import {
   getAdminSession,
   setAdminSession,
   syncChatAdmins,
+  deleteGroupById,
 } from './db-service.js';
 import {
   DEFAULT_DUTY_TASKS,
@@ -135,13 +136,18 @@ async function renderHome(api, chatId, messageId, ctxData, notice = '') {
 
 async function renderGroups(api, chatId, messageId, ctxData) {
   const { allGroups, grp } = ctxData;
-  const rows = allGroups.map((g) => {
+  const rows = [];
+  allGroups.forEach((g) => {
     const active = g.id === grp.id ? '✅ ' : '';
-    return [{ text: `${active}${g.groupName || g.id}`, callback_data: `adm:grp:${g.id}` }];
+    const row = [{ text: `${active}${g.groupName || g.id}`, callback_data: `adm:grp:${g.id}` }];
+    if (allGroups.length > 1) {
+      row.push({ text: '🗑️', callback_data: `adm:gdel:${g.id}` });
+    }
+    rows.push(row);
   });
   rows.push([{ text: '⬅️ Orqaga', callback_data: 'adm:home' }]);
 
-  await editOrSend(api, chatId, messageId, '🔄 Boshqariladigan guruhni tanlang:', { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, '🔄 Boshqariladigan guruhni tanlang (yoki ortiqchasini 🗑️ o\'chiring):', { inline_keyboard: rows });
 }
 
 async function renderDutyMenu(api, chatId, messageId, ctxData, notice = '') {
@@ -582,6 +588,17 @@ export async function handleAdminCallback(api, callbackQuery) {
     await setAdminSession(userId, { groupId: newGroupId, awaitingInput: null });
     const refreshed = await resolveAdminContext(api, userId, username);
     await renderHome(api, chatId, messageId, refreshed, '✅ Guruh tanlandi.');
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'gdel') {
+    const targetId = Number(arg);
+    if (!isNaN(targetId)) {
+      await deleteGroupById(targetId);
+    }
+    const refreshed = await resolveAdminContext(api, userId, username);
+    await renderHome(api, chatId, messageId, refreshed, "🗑️ Ortiqcha guruh o'chirildi.");
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
