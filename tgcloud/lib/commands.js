@@ -1,3 +1,5 @@
+import { getGroupSettings } from './settlement.js';
+
 export const USER_COMMANDS = [
   { command: 'expenses', description: 'Yaqindagi xarajatlar' },
   { command: 'duty', description: 'Bugungi navbatchi' },
@@ -20,9 +22,40 @@ export const ADMIN_COMMANDS = [
 ];
 
 export const PRIVATE_COMMANDS = [
-  { command: 'start', description: "Botni ishga tushirish" },
+  { command: 'start', description: "⚙️ Boshqaruv paneli (Admin Panel)" },
+  { command: 'admin', description: "⚙️ Boshqaruv panelini ochish" },
   { command: 'help', description: "Qo'llanma" },
 ];
+
+export async function syncGroupCommandMenu(api, groupId, group) {
+  if (!api || !groupId) return;
+  const settings = getGroupSettings(group);
+  const disabled = new Set(settings.disabledCommands);
+  const adminOnly = new Set(settings.adminOnlyCommands);
+
+  const visibleToMembers = ADMIN_COMMANDS.filter((c) => {
+    const slash = `/${c.command}`;
+    return !disabled.has(slash) && !adminOnly.has(slash);
+  });
+
+  const visibleToAdmins = ADMIN_COMMANDS.filter((c) => {
+    const slash = `/${c.command}`;
+    return !disabled.has(slash);
+  });
+
+  try {
+    await api.setMyCommands({
+      commands: visibleToMembers,
+      scope: { type: 'chat', chat_id: groupId },
+    });
+    await api.setMyCommands({
+      commands: visibleToAdmins,
+      scope: { type: 'chat_administrators', chat_id: groupId },
+    });
+  } catch (err) {
+    console.warn('Could not sync group command menu:', err?.message || err);
+  }
+}
 
 export async function setupBotCommands(api) {
   await api.setMyCommands({

@@ -1,5 +1,39 @@
+import { formatMoney } from './format.js';
+
 const UZT_OFFSET_MS = 5 * 3600 * 1000;
 const DAY_MS = 86400 * 1000;
+
+export const DEFAULT_DUTY_TASKS = [
+  'Suv',
+  "Musur to'kish",
+  'Dasturxonni qoqish',
+];
+
+export const DEFAULT_PAYMENT_INFO = '💳 9860080393751393\nShahboz Abdusattarov';
+
+export const DEFAULT_ADMIN_ONLY_COMMANDS = [
+  '/setmembers',
+  '/setduty',
+  '/setdutytime',
+  '/settle',
+  '/reset',
+];
+
+export function getGroupSettings(group) {
+  const raw = group && typeof group.settings === 'object' && group.settings ? group.settings : {};
+  return {
+    dutyTasks: Array.isArray(raw.dutyTasks) && raw.dutyTasks.length > 0 ? raw.dutyTasks : [...DEFAULT_DUTY_TASKS],
+    autoDutyEnabled: raw.autoDutyEnabled !== undefined ? Boolean(raw.autoDutyEnabled) : true,
+    disabledCommands: Array.isArray(raw.disabledCommands) ? raw.disabledCommands : [],
+    adminOnlyCommands: Array.isArray(raw.adminOnlyCommands) ? raw.adminOnlyCommands : [...DEFAULT_ADMIN_ONLY_COMMANDS],
+    generalDeleteSeconds: raw.generalDeleteSeconds !== undefined ? Number(raw.generalDeleteSeconds) : 120,
+    deleteUserCommand: raw.deleteUserCommand !== undefined ? Boolean(raw.deleteUserCommand) : true,
+    pendingDutyDeleteSeconds: raw.pendingDutyDeleteSeconds !== undefined ? Number(raw.pendingDutyDeleteSeconds) : 0,
+    doneDutyDeleteSeconds: raw.doneDutyDeleteSeconds !== undefined ? Number(raw.doneDutyDeleteSeconds) : 300,
+    paymentInfo: raw.paymentInfo !== undefined ? String(raw.paymentInfo) : DEFAULT_PAYMENT_INFO,
+    showPaymentInfo: raw.showPaymentInfo !== undefined ? Boolean(raw.showPaymentInfo) : true,
+  };
+}
 
 export function getUztTimeInfo() {
   const nowUztMs = Date.now() + UZT_OFFSET_MS;
@@ -160,10 +194,15 @@ export function getDutyPerson(roster, dutyOffset = 0, dayOffset = 0, isTodayDone
   return roster[idx];
 }
 
-export function formatMinimalDutyNotification(person, dateLabel = null, isDone = false) {
+export function formatMinimalDutyNotification(person, dateLabel = null, isDone = false, group = null) {
   const dt = dateLabel || formatUzDate();
   const header = isDone ? `Navbatchi (${dt}): ${person} (Done)` : `Navbatchi (${dt}): ${person}`;
-  return `${header}\n\nVazifalar:\n• Suv\n• Musur to'kish\n• Dasturxonni qoqish`;
+  const { dutyTasks } = getGroupSettings(group);
+  if (!dutyTasks || dutyTasks.length === 0) {
+    return header;
+  }
+  const tasksBlock = dutyTasks.map((t) => `• ${t}`).join('\n');
+  return `${header}\n\nVazifalar:\n${tasksBlock}`;
 }
 
 export function getDutyAdminKeyboard(isDone) {
@@ -215,4 +254,89 @@ export function getDutySchedule(group, members, daysCount = 7) {
   }
 
   return schedule;
+}
+
+export function buildDetailReportText(groupMembers, allExpenses, grp) {
+  if (!allExpenses || allExpenses.length === 0) {
+    return "Hozircha xarajatlar yo'q.";
+  }
+
+  const settings = getGroupSettings(grp);
+  const unsettledExpenses = allExpenses.filter((e) => e.settled === 0);
+  const activeList = unsettledExpenses.length > 0 ? unsettledExpenses : allExpenses;
+  const isShowingSettled = unsettledExpenses.length === 0;
+
+  const memberMap = new Map();
+  for (const exp of allExpenses) {
+    if (exp.payerId && exp.payerName) {
+      memberMap.set(Number(exp.payerId), exp.payerName);
+    }
+  }
+  for (const m of groupMembers) {
+    memberMap.set(Number(m.telegramId), m.name);
+  }
+
+  const byCurrency = {};
+  for (const exp of activeList) {
+    const c = (exp.currency || 'UZS').toUpperCase();
+    if (!byCurrency[c]) byCurrency[c] = [];
+    byCurrency[c].push(exp);
+  }
+
+  let resp = isShowingSettled ? 'Hisobot (Nollangan tarix)\n\n' : 'Hisobot\n\n';
+  const balancesByCur = calculateBalances(groupMembers, activeList, grp);
+
+  for (const [cur, curExpenses] of Object.entries(byCurrency)) {
+    const balances = balancesByCur[cur] || {};
+    const participantIds = Object.keys(balances).map(Number);
+    const numPeople = participantIds.length || groupMembers.length || 1;
+    const totalSpent = curExpenses.reduce((sum, e) => sum + e.amount, 0);
+    const fairShare = totalSpent / numPeople;
+
+    const spending = {};
+    for (const pid of participantIds) spending[pid] = 0;
+    for (const e of curExpenses) {
+      const pid = Number(e.payerId);
+      spending[pid] = (spending[pid] || 0) + e.amount;
+    }
+
+    resp += `Jami xarajat: ${formatMoney(totalSpent, cur)} (${curExpenses.length} ta)\n`;
+    resp += `Har bir kishiga: ${formatMoney(fairShare, cur)}\n\n`;
+
+    resp += "Kim qancha to'ladi:\n";
+    const spendingByName = new Map();
+    for (const [mid, amt] of Object.entries(spending)) {
+      const name = memberMap.get(Number(mid)) || 'Unknown';
+      spendingByName.set(name, (spendingByName.get(name) || 0) + amt);
+    }
+    const sortedSpending = Array.from(spendingByName.entries()).sort((a, b) => b[1] - a[1]);
+    for (const [name, amt] of sortedSpending) {
+      resp += `${name}: ${formatMoney(amt, cur)}\n`;
+    }
+
+    if (!isShowingSettled) {
+      resp += '\nBalans:\n';
+      const balancesByName = new Map();
+      for (const [mid, bal] of Object.entries(balances)) {
+        const name = memberMap.get(Number(mid)) || 'Unknown';
+        balancesByName.set(name, (balancesByName.get(name) || 0) + bal);
+      }
+      const sortedBal = Array.from(balancesByName.entries()).sort((a, b) => b[1] - a[1]);
+      for (const [name, bal] of sortedBal) {
+        const sign = bal > 0 ? '+' : '';
+        if (Math.abs(bal) > 0.05) {
+          resp += `${name}: ${sign}${formatMoney(bal, cur)}\n`;
+        } else {
+          resp += `${name}: 0\n`;
+        }
+      }
+
+      if (settings.showPaymentInfo && settings.paymentInfo) {
+        resp += `\nTo'lov uchun (Pay to):\n${settings.paymentInfo}\n`;
+      }
+    }
+    resp += '\n';
+  }
+
+  return resp.trim();
 }

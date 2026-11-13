@@ -9,6 +9,7 @@ export const groups = table('groups', {
   lastDutyDate: text('last_duty_date'),
   lastDutyDoneDate: text('last_duty_done_date'),
   expenseRoster: json('expense_roster'),
+  settings: json('settings'),
   createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 });
 
@@ -56,3 +57,10 @@ export const pendingDeletions = table('pending_deletions', {
 }, (t) => ({
   deleteAtIdx: index('idx_pending_del_at').on(t.deleteAt),
 }));
+
+export const adminSessions = table('admin_sessions', {
+  userId: integer('user_id').primaryKey(),
+  groupId: integer('group_id'),
+  awaitingInput: text('awaiting_input'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+});

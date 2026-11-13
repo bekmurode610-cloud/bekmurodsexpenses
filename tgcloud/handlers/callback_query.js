@@ -18,8 +18,10 @@ import {
   formatUzDate,
   formatMinimalDutyNotification,
   getUztTimeInfo,
+  getGroupSettings,
 } from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
+import { handleAdminCallback } from '../lib/admin-panel.js';
 
 export function getDutyAdminKeyboard(isDone) {
   if (isDone) {
@@ -56,9 +58,18 @@ export default async function (callbackQuery, ctx) {
     return;
   }
 
-  // Refresh 2-minute timer on non-duty interaction with message in group chat
-  if (chatId < 0 && !data?.startsWith('duty_')) {
-    await touchMessageDeletion(chatId, messageId, 120);
+  // Private Admin Panel callbacks
+  if (data && data.startsWith('adm:')) {
+    await handleAdminCallback(api, callbackQuery);
+    return;
+  }
+
+  const groupRow = chatId < 0 ? await getGroup(chatId) : null;
+  const groupSettings = getGroupSettings(groupRow);
+
+  // Refresh timer on non-duty interaction with message in group chat
+  if (chatId < 0 && !data?.startsWith('duty_') && groupSettings.generalDeleteSeconds > 0) {
+    await touchMessageDeletion(chatId, messageId, groupSettings.generalDeleteSeconds);
   }
 
   if (data === 'cancel_action') {
@@ -102,11 +113,15 @@ export default async function (callbackQuery, ctx) {
       await api.editMessageText({
         chat_id: chatId,
         message_id: messageId,
-        text: formatMinimalDutyNotification(donePerson, dateLabel, true),
+        text: formatMinimalDutyNotification(donePerson, dateLabel, true, grp),
         reply_markup: getDutyAdminKeyboard(true),
       });
       if (chatId < 0) {
-        await touchMessageDeletion(chatId, messageId, 300);
+        if (groupSettings.doneDutyDeleteSeconds > 0) {
+          await touchMessageDeletion(chatId, messageId, groupSettings.doneDutyDeleteSeconds);
+        } else {
+          await cancelMessageDeletion(chatId, messageId);
+        }
       }
       await api.answerCallbackQuery({
         callback_query_id: cbId,
@@ -124,15 +139,19 @@ export default async function (callbackQuery, ctx) {
     const nextOffset = (currentOffset + 1) % k;
     await setGroupDutyOffset(chatId, nextOffset);
 
-    // 3. Edit message in-place with Undo button & schedule 5-minute deletion
+    // 3. Edit message in-place with Undo button & schedule configured deletion timer
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: formatMinimalDutyNotification(person, dateLabel, true),
+      text: formatMinimalDutyNotification(person, dateLabel, true, grp),
       reply_markup: getDutyAdminKeyboard(true),
     });
     if (chatId < 0) {
-      await touchMessageDeletion(chatId, messageId, 300);
+      if (groupSettings.doneDutyDeleteSeconds > 0) {
+        await touchMessageDeletion(chatId, messageId, groupSettings.doneDutyDeleteSeconds);
+      } else {
+        await cancelMessageDeletion(chatId, messageId);
+      }
     }
 
     await api.answerCallbackQuery({
@@ -180,11 +199,15 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: formatMinimalDutyNotification(person, dateLabel, false),
+      text: formatMinimalDutyNotification(person, dateLabel, false, grp),
       reply_markup: getDutyAdminKeyboard(false),
     });
     if (chatId < 0) {
-      await cancelMessageDeletion(chatId, messageId);
+      if (groupSettings.pendingDutyDeleteSeconds > 0) {
+        await touchMessageDeletion(chatId, messageId, groupSettings.pendingDutyDeleteSeconds);
+      } else {
+        await cancelMessageDeletion(chatId, messageId);
+      }
     }
 
     await api.answerCallbackQuery({
@@ -226,11 +249,15 @@ export default async function (callbackQuery, ctx) {
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: formatMinimalDutyNotification(person, dateLabel, false),
+      text: formatMinimalDutyNotification(person, dateLabel, false, grp),
       reply_markup: getDutyAdminKeyboard(false),
     });
     if (chatId < 0) {
-      await cancelMessageDeletion(chatId, messageId);
+      if (groupSettings.pendingDutyDeleteSeconds > 0) {
+        await touchMessageDeletion(chatId, messageId, groupSettings.pendingDutyDeleteSeconds);
+      } else {
+        await cancelMessageDeletion(chatId, messageId);
+      }
     }
     await api.answerCallbackQuery({ callback_query_id: cbId, text: `Navbatchi: ${person}` });
     return;

@@ -28,9 +28,12 @@ import {
   formatMinimalDutyNotification,
   getDutyAdminKeyboard,
   getUztTimeInfo,
+  getGroupSettings,
+  buildDetailReportText,
 } from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
 import { formatMoney, parseExpenseInput } from '../lib/format.js';
+import { handleAdminPrivateMessage } from '../lib/admin-panel.js';
 
 function buildMemberNameMap(groupMembers, expensesList = []) {
   const map = new Map();
@@ -53,9 +56,13 @@ export function formatDutyMessage(schedule, group) {
   const today = schedule[0];
   const tomorrow = schedule[1];
   const dutyTime = group?.dutyTime || '09:00';
+  const { dutyTasks } = getGroupSettings(group);
+  const tasksText = dutyTasks.map((t) => `• ${t}`).join('\n');
 
   let resp = `Navbatchi (${today.dateLabel}): ${today.name}${today.isDone ? ' (Done)' : ''}\n\n`;
-  resp += "Vazifalar:\n• Suv\n• Musur to'kish\n• Dasturxonni qoqish\n\n";
+  if (tasksText) {
+    resp += `Vazifalar:\n${tasksText}\n\n`;
+  }
   if (tomorrow) {
     resp += `Keyingi navbat: ${tomorrow.name}\n`;
   }
@@ -89,23 +96,25 @@ export default async function (message, ctx) {
     return;
   }
 
-  // 1. Private chat handling
+  // 1. Private chat handling — Bot Admin Control Center
   if (isPrivate) {
-    if (text.startsWith('/start') || text.startsWith('/help')) {
-      await api.sendMessage({
-        chat_id: chatId,
-        text:
-          'Expense & Navbatchi Tracker\n\n' +
-          "Xarajatlarni va navbatchilikni boshqarish uchun botni guruhga qo'shing.\n\n" +
-          'Xarajat yozish misoli:\n' +
-          '* 40 ming nonga',
-      });
-    }
+    await handleAdminPrivateMessage(api, message);
     return;
   }
 
+  // Record/ensure group exists first so settings are always available
+  const existingGroup = await getGroup(chatId);
+  const groupSettings = getGroupSettings(existingGroup);
+
   const sendReply = async (params) => {
-    return await sendAutoDeleteMessage(api, chatId, params, message.message_id);
+    return await sendAutoDeleteMessage(
+      api,
+      chatId,
+      params,
+      message.message_id,
+      groupSettings.generalDeleteSeconds,
+      groupSettings.deleteUserCommand
+    );
   };
 
   const isStarExpense = text.startsWith('*');
@@ -119,15 +128,12 @@ export default async function (message, ctx) {
     lowerText.startsWith('/duty') ||
     lowerText.startsWith('/navbatchi');
 
-  if (!isDutyCommand) {
-    const currentGroup = await getGroup(chatId);
-    if (currentGroup) {
-      const { dateStr, timeStr } = getUztTimeInfo();
-      const scheduledTime = currentGroup.dutyTime || '09:00';
-      if (timeStr >= scheduledTime && currentGroup.lastDutyDate !== dateStr) {
-        const currentMembers = await getMembers(chatId);
-        await checkAndAnnounceDuty(api, currentGroup, currentMembers);
-      }
+  if (!isDutyCommand && existingGroup && groupSettings.autoDutyEnabled) {
+    const { dateStr, timeStr } = getUztTimeInfo();
+    const scheduledTime = existingGroup.dutyTime || '09:00';
+    if (timeStr >= scheduledTime && existingGroup.lastDutyDate !== dateStr) {
+      const currentMembers = await getMembers(chatId);
+      await checkAndAnnounceDuty(api, existingGroup, currentMembers);
     }
   }
 
@@ -141,6 +147,17 @@ export default async function (message, ctx) {
 
   // 2. Expense entry: starts with '*'
   if (isStarExpense) {
+    if (groupSettings.disabledCommands.includes('*')) {
+      return;
+    }
+    if (groupSettings.adminOnlyCommands.includes('*')) {
+      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
+      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+      if (!isAdmin) {
+        await sendReply({ chat_id: chatId, text: "Xarajat qo'shish faqat guruh adminlari uchun." });
+        return;
+      }
+    }
     const cleanText = text.slice(1);
     const parsed = parseExpenseInput(cleanText);
     if (!parsed) {
@@ -184,6 +201,23 @@ export default async function (message, ctx) {
 
   // 3. Command handling
   const command = text.split(/\s+/)[0].toLowerCase().split('@')[0];
+  const cmdKey = command === '/navbatchi' ? '/duty' : command === '/start' ? '/help' : command;
+
+  if (groupSettings.disabledCommands.includes(cmdKey)) {
+    return;
+  }
+
+  if (groupSettings.adminOnlyCommands.includes(cmdKey)) {
+    await syncChatAdmins(api, chatId, message.chat.title || 'Group');
+    const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
+    if (!isAdmin) {
+      await sendReply({
+        chat_id: chatId,
+        text: 'Bu buyruq faqat guruh adminlari uchun.',
+      });
+      return;
+    }
+  }
 
   switch (command) {
     case '/start':
@@ -256,16 +290,6 @@ export default async function (message, ctx) {
     }
 
     case '/setmembers': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
-      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
-      if (!isAdmin) {
-        await sendReply({
-          chat_id: chatId,
-          text: "Faqat guruh admini a'zolarni belgilashi mumkin.",
-        });
-        return;
-      }
-
       const rawParts = text.split(/\s+/).slice(1);
       if (rawParts.length === 0) {
         await sendReply({
@@ -300,16 +324,6 @@ export default async function (message, ctx) {
     }
 
     case '/setduty': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
-      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
-      if (!isAdmin) {
-        await sendReply({
-          chat_id: chatId,
-          text: 'Faqat guruh admini navbatchilarni belgilashi mumkin.',
-        });
-        return;
-      }
-
       const parts = text.split(/\s+/).slice(1).map((p) => p.replace(/,/g, '').trim()).filter(Boolean);
       if (parts.length === 0) {
         await sendReply({
@@ -328,16 +342,6 @@ export default async function (message, ctx) {
     }
 
     case '/setdutytime': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
-      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
-      if (!isAdmin) {
-        await sendReply({
-          chat_id: chatId,
-          text: 'Faqat guruh admini vaqtni belgilashi mumkin.',
-        });
-        return;
-      }
-
       const timeArg = text.split(/\s+/)[1];
       if (!timeArg || !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeArg)) {
         await sendReply({
@@ -416,16 +420,17 @@ export default async function (message, ctx) {
 
       const reply_markup = isAdmin ? getDutyAdminKeyboard(isDone) : undefined;
 
-      if (chatId < 0 && message.message_id) {
+      if (chatId < 0 && message.message_id && groupSettings.deleteUserCommand) {
         await queueMessageDeletion(chatId, message.message_id, 120);
       }
       const dutyMsgParams = {
         chat_id: chatId,
-        text: formatMinimalDutyNotification(activePerson, dateLabel, isDone),
+        text: formatMinimalDutyNotification(activePerson, dateLabel, isDone, grp),
         reply_markup,
       };
-      if (isDone) {
-        await sendAutoDeleteMessage(api, chatId, dutyMsgParams, null, 300);
+      const dutyDelay = isDone ? groupSettings.doneDutyDeleteSeconds : groupSettings.pendingDutyDeleteSeconds;
+      if (dutyDelay > 0) {
+        await sendAutoDeleteMessage(api, chatId, dutyMsgParams, null, dutyDelay);
       } else {
         await api.sendMessage(dutyMsgParams);
       }
@@ -437,84 +442,9 @@ export default async function (message, ctx) {
       const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
       const grp = await getGroup(chatId);
 
-      if (!allExpenses || allExpenses.length === 0) {
-        await sendReply({
-          chat_id: chatId,
-          text: "Hozircha xarajatlar yo'q.",
-        });
-        return;
-      }
-
-      const unsettledExpenses = allExpenses.filter((e) => e.settled === 0);
-      const activeList = unsettledExpenses.length > 0 ? unsettledExpenses : allExpenses;
-      const isShowingSettled = unsettledExpenses.length === 0;
-
-      const memberMap = buildMemberNameMap(groupMembers, allExpenses);
-
-      const byCurrency = {};
-      for (const exp of activeList) {
-        const c = (exp.currency || 'UZS').toUpperCase();
-        if (!byCurrency[c]) byCurrency[c] = [];
-        byCurrency[c].push(exp);
-      }
-
-      let resp = isShowingSettled ? "Hisobot (Nollangan tarix)\n\n" : "Hisobot\n\n";
-
-      const balancesByCur = calculateBalances(groupMembers, activeList, grp);
-
-      for (const [cur, curExpenses] of Object.entries(byCurrency)) {
-        const balances = balancesByCur[cur] || {};
-        const participantIds = Object.keys(balances).map(Number);
-        const numPeople = participantIds.length || groupMembers.length || 1;
-        const totalSpent = curExpenses.reduce((sum, e) => sum + e.amount, 0);
-        const fairShare = totalSpent / numPeople;
-
-        const spending = {};
-        for (const pid of participantIds) spending[pid] = 0;
-        for (const e of curExpenses) {
-          const pid = Number(e.payerId);
-          spending[pid] = (spending[pid] || 0) + e.amount;
-        }
-
-        resp += `Jami xarajat: ${formatMoney(totalSpent, cur)} (${curExpenses.length} ta)\n`;
-        resp += `Har bir kishiga: ${formatMoney(fairShare, cur)}\n\n`;
-
-        resp += "Kim qancha to'ladi:\n";
-        const spendingByName = new Map();
-        for (const [mid, amt] of Object.entries(spending)) {
-          const name = memberMap.get(Number(mid)) || 'Unknown';
-          spendingByName.set(name, (spendingByName.get(name) || 0) + amt);
-        }
-        const sortedSpending = Array.from(spendingByName.entries()).sort((a, b) => b[1] - a[1]);
-        for (const [name, amt] of sortedSpending) {
-          resp += `${name}: ${formatMoney(amt, cur)}\n`;
-        }
-
-        if (!isShowingSettled) {
-          resp += '\nBalans:\n';
-          const balancesByName = new Map();
-          for (const [mid, bal] of Object.entries(balances)) {
-            const name = memberMap.get(Number(mid)) || 'Unknown';
-            balancesByName.set(name, (balancesByName.get(name) || 0) + bal);
-          }
-          const sortedBal = Array.from(balancesByName.entries()).sort((a, b) => b[1] - a[1]);
-          for (const [name, bal] of sortedBal) {
-            const sign = bal > 0 ? '+' : '';
-            if (Math.abs(bal) > 0.05) {
-              resp += `${name}: ${sign}${formatMoney(bal, cur)}\n`;
-            } else {
-              resp += `${name}: 0\n`;
-            }
-          }
-
-          resp += "\nTo'lov uchun (Pay to):\n💳 9860080393751393\nShahboz Abdusattarov\n";
-        }
-        resp += '\n';
-      }
-
       await sendReply({
         chat_id: chatId,
-        text: resp.trim(),
+        text: buildDetailReportText(groupMembers, allExpenses, grp),
       });
       break;
     }
@@ -598,16 +528,6 @@ export default async function (message, ctx) {
     }
 
     case '/settle': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
-      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
-      if (!isAdmin) {
-        await sendReply({
-          chat_id: chatId,
-          text: 'Faqat guruh admini qarzlarni nollashi mumkin.',
-        });
-        return;
-      }
-
       await sendReply({
         chat_id: chatId,
         text: 'Barcha joriy hisob-kitoblarni nollaysizmi?',
@@ -624,16 +544,6 @@ export default async function (message, ctx) {
     }
 
     case '/reset': {
-      await syncChatAdmins(api, chatId, message.chat.title || 'Group');
-      const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
-      if (!isAdmin) {
-        await sendReply({
-          chat_id: chatId,
-          text: "Faqat guruh admini xarajatlarni o'chirishi mumkin.",
-        });
-        return;
-      }
-
       await sendReply({
         chat_id: chatId,
         text: "Diqqat: Guruhdagi barcha xarajatlar tarixini butunlay o'chirasizmi?",

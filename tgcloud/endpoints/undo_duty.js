@@ -38,7 +38,7 @@ export default async function (input, ctx) {
 
   await api.sendMessage({
     chat_id: chatId,
-    text: `Done holati bekor qilindi.\n\n${formatMinimalDutyNotification(person, dateLabel, false)}`,
+    text: `Done holati bekor qilindi.\n\n${formatMinimalDutyNotification(person, dateLabel, false, grp)}`,
     reply_markup: getDutyAdminKeyboard(false),
   });
 

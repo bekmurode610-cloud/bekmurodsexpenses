@@ -1,6 +1,6 @@
 import { db } from 'sdk';
 import { eq, and, desc, gte, lte, asc } from 'sdk/db';
-import { groups, members, expenses, userRoles, pendingDeletions } from '../schema.js';
+import { groups, members, expenses, userRoles, pendingDeletions, adminSessions } from '../schema.js';
 import {
   getUztTimeInfo,
   getDutyRosterList,
@@ -9,6 +9,7 @@ import {
   formatUzDate,
   formatMinimalDutyNotification,
   getDutyAdminKeyboard,
+  getGroupSettings,
 } from './settlement.js';
 
 function normalizeName(str) {
@@ -46,6 +47,46 @@ export async function setGroupDutyRoster(groupId, rosterList) {
 
 export async function setGroupExpenseRoster(groupId, rosterList) {
   await db.update(groups).set({ expenseRoster: rosterList }).where(eq(groups.id, groupId)).run();
+}
+
+export async function updateGroupSettings(groupId, partialSettings) {
+  const grp = await getGroup(groupId);
+  if (!grp) return null;
+  const current = grp.settings && typeof grp.settings === 'object' ? grp.settings : {};
+  const next = { ...current, ...partialSettings };
+  await db.update(groups).set({ settings: next }).where(eq(groups.id, groupId)).run();
+  return getGroupSettings({ ...grp, settings: next });
+}
+
+export async function getAdminSession(userId) {
+  let row = await db.select().from(adminSessions).where(eq(adminSessions.userId, userId)).get();
+  if (!row) {
+    const allGroups = await getAllGroups();
+    const defaultGroupId = allGroups.length > 0 ? allGroups[0].id : null;
+    await db
+      .insert(adminSessions)
+      .values({ userId, groupId: defaultGroupId, awaitingInput: null })
+      .run();
+    row = await db.select().from(adminSessions).where(eq(adminSessions.userId, userId)).get();
+  }
+  return row;
+}
+
+export async function setAdminSession(userId, updates) {
+  const existing = await db.select().from(adminSessions).where(eq(adminSessions.userId, userId)).get();
+  if (existing) {
+    await db
+      .update(adminSessions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(adminSessions.userId, userId))
+      .run();
+  } else {
+    await db
+      .insert(adminSessions)
+      .values({ userId, ...updates })
+      .run();
+  }
+  return await getAdminSession(userId);
 }
 
 export async function setGroupDutyTime(groupId, dutyTime) {
@@ -117,6 +158,9 @@ export async function assignDutyMember(groupId, user) {
 
 export async function checkAndAnnounceDuty(api, group, members, force = false) {
   if (!group) return false;
+  const settings = getGroupSettings(group);
+  if (!force && !settings.autoDutyEnabled) return false;
+
   const roster = getDutyRosterList(group, members);
   if (!roster || roster.length === 0) return false;
 
@@ -131,11 +175,12 @@ export async function checkAndAnnounceDuty(api, group, members, force = false) {
         const dateLabel = formatUzDate(nowUzt);
         const msgParams = {
           chat_id: group.id,
-          text: formatMinimalDutyNotification(person, dateLabel, isDone),
+          text: formatMinimalDutyNotification(person, dateLabel, isDone, group),
           reply_markup: getDutyAdminKeyboard(isDone),
         };
-        if (isDone) {
-          await sendAutoDeleteMessage(api, group.id, msgParams, null, 300);
+        const delaySec = isDone ? settings.doneDutyDeleteSeconds : settings.pendingDutyDeleteSeconds;
+        if (delaySec > 0) {
+          await sendAutoDeleteMessage(api, group.id, msgParams, null, delaySec);
         } else {
           await api.sendMessage(msgParams);
         }
@@ -427,11 +472,18 @@ export async function cleanupPendingDeletions(api) {
   }
 }
 
-export async function sendAutoDeleteMessage(api, chatId, msgParams, userMsgId = null, delaySeconds = 120) {
+export async function sendAutoDeleteMessage(
+  api,
+  chatId,
+  msgParams,
+  userMsgId = null,
+  delaySeconds = 120,
+  deleteUserMsg = true
+) {
   const sent = await api.sendMessage(msgParams);
   // Auto-deletion timer applies to group chats (chatId < 0)
   if (chatId < 0) {
-    if (sent?.message_id) {
+    if (sent?.message_id && delaySeconds > 0) {
       await queueMessageDeletion(chatId, sent.message_id, delaySeconds);
       if (typeof setTimeout !== 'undefined') {
         setTimeout(async () => {
@@ -446,8 +498,9 @@ export async function sendAutoDeleteMessage(api, chatId, msgParams, userMsgId = 
       }
     }
 
-    if (userMsgId) {
-      await queueMessageDeletion(chatId, userMsgId, delaySeconds);
+    if (userMsgId && deleteUserMsg) {
+      const userDelay = delaySeconds > 0 ? delaySeconds : 120;
+      await queueMessageDeletion(chatId, userMsgId, userDelay);
       if (typeof setTimeout !== 'undefined') {
         setTimeout(async () => {
           try {
@@ -457,7 +510,7 @@ export async function sendAutoDeleteMessage(api, chatId, msgParams, userMsgId = 
               .where(and(eq(pendingDeletions.chatId, chatId), eq(pendingDeletions.messageId, userMsgId)))
               .run();
           } catch (_) {}
-        }, delaySeconds * 1000);
+        }, userDelay * 1000);
       }
     }
   }
