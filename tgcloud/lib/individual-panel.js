@@ -728,6 +728,62 @@ export async function handleIndividualCallback(api, callbackQuery) {
 
   if (action === 'r_del') {
     const recId = parseInt(arg, 10);
+    const records = await getPersonalRecords(userId, { limit: 100 });
+    const rec = !isNaN(recId) ? records.find((r) => r.id === recId) : null;
+    if (!rec) {
+      await renderRecords(api, chatId, messageId, userId, 'Yozuv topilmadi.');
+      await api.answerCallbackQuery({ callback_query_id: cbId });
+      return;
+    }
+    const sign = rec.type === 'income' ? '+' : '-';
+    const curMethod = rec.paymentMethod === 'cash' ? 'cash' : 'card';
+    const summary = `${sign}${formatMoney(rec.amount, rec.currency)} · ${rec.description} (${methodLabel(curMethod)})`;
+    await editOrSend(
+      api,
+      chatId,
+      messageId,
+      `1-tasdiqlash: Ushbu yozuvni o'chirasizmi? (1/2)\n\n${summary}`,
+      {
+        inline_keyboard: [
+          [{ text: "Yo'q, bekor qilish", callback_data: 'ind:records' }],
+          [{ text: "Ha, davom etish (1/2)", callback_data: `ind:r_del1:${rec.id}` }],
+        ],
+      }
+    );
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'r_del1') {
+    const recId = parseInt(arg, 10);
+    const records = await getPersonalRecords(userId, { limit: 100 });
+    const rec = !isNaN(recId) ? records.find((r) => r.id === recId) : null;
+    if (!rec) {
+      await renderRecords(api, chatId, messageId, userId, 'Yozuv topilmadi.');
+      await api.answerCallbackQuery({ callback_query_id: cbId });
+      return;
+    }
+    const sign = rec.type === 'income' ? '+' : '-';
+    const curMethod = rec.paymentMethod === 'cash' ? 'cash' : 'card';
+    const summary = `${sign}${formatMoney(rec.amount, rec.currency)} · ${rec.description} (${methodLabel(curMethod)})`;
+    await editOrSend(
+      api,
+      chatId,
+      messageId,
+      `2-tasdiqlash: Aniq butunlay o'chirasizmi? (2/2)\n\n${summary}\nBu amalni ortga qaytarib bo'lmaydi.`,
+      {
+        inline_keyboard: [
+          [{ text: "← Yo'q, qolsin", callback_data: 'ind:records' }],
+          [{ text: "Ha, butunlay o'chirish (2/2)", callback_data: `ind:r_del2:${rec.id}` }],
+        ],
+      }
+    );
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'r_del2') {
+    const recId = parseInt(arg, 10);
     if (!isNaN(recId)) {
       await deletePersonalRecord(userId, recId);
     }
@@ -759,13 +815,28 @@ export async function handleIndividualCallback(api, callbackQuery) {
       api,
       chatId,
       messageId,
-      "Barcha shaxsiy kirim va chiqim yozuvlarini o'chirasizmi?",
+      "1-tasdiqlash: Barcha shaxsiy kirim va chiqim yozuvlarini o'chirasizmi? (1/2)",
       {
         inline_keyboard: [
-          [
-            { text: "Ha, o'chirish", callback_data: 'ind:r_clear_ok' },
-            { text: 'Bekor qilish', callback_data: 'ind:report' },
-          ],
+          [{ text: 'Bekor qilish', callback_data: 'ind:report' }],
+          [{ text: "Ha, davom etish (1/2)", callback_data: 'ind:r_clear1' }],
+        ],
+      }
+    );
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'r_clear1') {
+    await editOrSend(
+      api,
+      chatId,
+      messageId,
+      "2-tasdiqlash: Barcha yozuvlar butunlay o'chiriladi. Davom etasizmi? (2/2)",
+      {
+        inline_keyboard: [
+          [{ text: "← Yo'q, qolsin", callback_data: 'ind:report' }],
+          [{ text: "Ha, hammasini o'chirish (2/2)", callback_data: 'ind:r_clear_ok' }],
         ],
       }
     );

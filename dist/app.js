@@ -9,6 +9,7 @@
     busy: false,
     data: null,
     toastTimer: null,
+    confirmTimer: null,
   };
 
   if (tg) {
@@ -98,6 +99,82 @@
     if (className) node.className = className;
     if (text !== undefined && text !== null) node.textContent = text;
     return node;
+  }
+
+  function closeConfirmDialog() {
+    if (state.confirmTimer) {
+      clearTimeout(state.confirmTimer);
+      state.confirmTimer = null;
+    }
+    const backdrop = document.getElementById('confirmBackdrop');
+    if (backdrop) backdrop.hidden = true;
+  }
+
+  function openConfirmDialog(opts) {
+    const backdrop = document.getElementById('confirmBackdrop');
+    const titleEl = document.getElementById('confirmTitle');
+    const descEl = document.getElementById('confirmDesc');
+    const actionsEl = document.getElementById('confirmActions');
+    if (!backdrop || !titleEl || !descEl || !actionsEl) return;
+
+    function renderStepTwo() {
+      haptic('light');
+      titleEl.textContent = opts.title2;
+      descEl.textContent = opts.desc2;
+      actionsEl.innerHTML = '';
+
+      // Place final danger action on the left while keep/cancel takes the spot
+      // that was just tapped in step 1, blocking accidental double-taps.
+      const finalBtn = el('button', 'danger-solid-btn', opts.confirmLabel2 || "Ha, o'chirish (2/2)");
+      finalBtn.type = 'button';
+      finalBtn.disabled = true;
+
+      const keepBtn = el('button', 'secondary-btn', "Yo'q, qolsin");
+      keepBtn.type = 'button';
+      keepBtn.addEventListener('click', closeConfirmDialog);
+
+      finalBtn.addEventListener('click', () => {
+        haptic('heavy');
+        closeConfirmDialog();
+        opts.onConfirm();
+      });
+
+      actionsEl.appendChild(finalBtn);
+      actionsEl.appendChild(keepBtn);
+
+      if (state.confirmTimer) clearTimeout(state.confirmTimer);
+      state.confirmTimer = setTimeout(() => {
+        finalBtn.disabled = false;
+      }, 500);
+    }
+
+    titleEl.textContent = opts.title1;
+    descEl.textContent = opts.desc1;
+    actionsEl.innerHTML = '';
+
+    const cancelBtn = el('button', 'secondary-btn', "Bekor qilish");
+    cancelBtn.type = 'button';
+    cancelBtn.addEventListener('click', closeConfirmDialog);
+
+    const stepOneBtn = el(
+      'button',
+      opts.twoStep ? 'danger-outline-btn' : 'danger-solid-btn',
+      opts.confirmLabel1 || "Ha, o'chirish"
+    );
+    stepOneBtn.type = 'button';
+    stepOneBtn.addEventListener('click', () => {
+      if (opts.twoStep) {
+        renderStepTwo();
+      } else {
+        haptic('medium');
+        closeConfirmDialog();
+        opts.onConfirm();
+      }
+    });
+
+    actionsEl.appendChild(cancelBtn);
+    actionsEl.appendChild(stepOneBtn);
+    backdrop.hidden = false;
   }
 
   function renderHeader() {
@@ -198,9 +275,24 @@
       const delBtn = el('button', 'icon-btn', '×');
       delBtn.type = 'button';
       delBtn.setAttribute('aria-label', "Yozuvni o'chirish");
-      delBtn.addEventListener('click', () => {
-        haptic('medium');
-        runAction({ action: 'delete_record', recordId: rec.id }, "O'chirilmoqda...");
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        haptic('light');
+        const methodText = rec.paymentMethod === 'cash' ? 'Naqd' : 'Karta';
+        const amountText = (isInc ? '+' : '-') + formatMoney(rec.amount, rec.currency);
+        const itemLabel = rec.description + ' (' + amountText + ', ' + methodText + ')';
+        openConfirmDialog({
+          twoStep: true,
+          title1: "Yozuvni o'chirasizmi? (1/2)",
+          desc1: itemLabel,
+          confirmLabel1: "Ha, o'chirish (1/2)",
+          title2: "Aniq o'chirasizmi? (2/2)",
+          desc2: itemLabel + " butunlay o'chiriladi. Ortga qaytarib bo'lmaydi.",
+          confirmLabel2: "Butunlay o'chirish",
+          onConfirm: () => {
+            runAction({ action: 'delete_record', recordId: rec.id }, "O'chirilmoqda...", "Yozuv o'chirildi");
+          },
+        });
       });
 
       actions.appendChild(methodBtn);
@@ -243,8 +335,16 @@
       const payBtn = el('button', 'method-toggle', 'Yopish');
       payBtn.type = 'button';
       payBtn.addEventListener('click', () => {
-        haptic('medium');
-        runAction({ action: 'pay_debt', debtId: d.id }, 'Yopilmoqda...', 'Qarz yopildi');
+        haptic('light');
+        openConfirmDialog({
+          twoStep: false,
+          title1: 'Qarzni yopasizmi?',
+          desc1: d.personName + ' (' + formatMoney(d.amount, d.currency) + ') yopilgan deb belgilanadi.',
+          confirmLabel1: 'Ha, yopish',
+          onConfirm: () => {
+            runAction({ action: 'pay_debt', debtId: d.id }, 'Yopilmoqda...', 'Qarz yopildi');
+          },
+        });
       });
 
       actions.appendChild(payBtn);
@@ -287,9 +387,21 @@
         const delBtn = el('button', 'icon-btn', '×');
         delBtn.type = 'button';
         delBtn.setAttribute('aria-label', "Vazifani o'chirish");
-        delBtn.addEventListener('click', () => {
-          haptic('medium');
-          runAction({ action: 'remove_task', index: idx }, "O'chirilmoqda...");
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          haptic('light');
+          openConfirmDialog({
+            twoStep: true,
+            title1: "Vazifani o'chirasizmi? (1/2)",
+            desc1: task,
+            confirmLabel1: "Ha, o'chirish (1/2)",
+            title2: "Aniq o'chirasizmi? (2/2)",
+            desc2: '"' + task + '" ro\'yxatdan olib tashlanadi.',
+            confirmLabel2: "Butunlay o'chirish",
+            onConfirm: () => {
+              runAction({ action: 'remove_task', index: idx }, "O'chirilmoqda...", "Vazifa o'chirildi");
+            },
+          });
         });
 
         row.appendChild(checkBtn);
@@ -518,6 +630,16 @@
         'Saqlanmoqda...',
         'Limitlar saqlandi'
       );
+    });
+
+    const backdrop = document.getElementById('confirmBackdrop');
+    if (backdrop) {
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) closeConfirmDialog();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeConfirmDialog();
     });
   }
 
