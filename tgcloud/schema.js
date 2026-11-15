@@ -71,6 +71,7 @@ export const personalRecords = table('personal_records', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: integer('user_id').notNull(),
   type: text('type').notNull(), // 'expense' | 'income'
+  paymentMethod: text('payment_method').default('card'), // 'card' | 'cash'
   amount: real('amount').notNull(),
   currency: text('currency').notNull(),
   category: text('category').notNull(),

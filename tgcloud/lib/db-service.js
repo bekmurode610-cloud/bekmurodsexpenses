@@ -569,12 +569,22 @@ export async function updatePersonalSettings(userId, partial) {
   return getPersonalSettings({ ...session, personalSettings: next });
 }
 
-export async function addPersonalRecord({ userId, type, amount, currency = 'UZS', category, description }) {
+export async function addPersonalRecord({
+  userId,
+  type,
+  paymentMethod = 'card',
+  amount,
+  currency = 'UZS',
+  category,
+  description,
+}) {
+  const method = paymentMethod === 'cash' ? 'cash' : 'card';
   const [inserted] = await db
     .insert(personalRecords)
     .values({
       userId,
       type,
+      paymentMethod: method,
       amount,
       currency,
       category,
@@ -583,6 +593,23 @@ export async function addPersonalRecord({ userId, type, amount, currency = 'UZS'
     .returning()
     .run();
   return inserted;
+}
+
+export async function togglePersonalRecordMethod(userId, recordId) {
+  const row = await db
+    .select()
+    .from(personalRecords)
+    .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
+    .get();
+  if (!row) return null;
+  const nextMethod = row.paymentMethod === 'cash' ? 'card' : 'cash';
+  const [updated] = await db
+    .update(personalRecords)
+    .set({ paymentMethod: nextMethod })
+    .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
+    .returning()
+    .run();
+  return updated;
 }
 
 export async function getPersonalRecords(userId, { limit = 500 } = {}) {

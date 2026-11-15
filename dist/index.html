@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Shaxsiy kabinet</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="topbar-meta">
+        <div class="user-title" id="userName">Shaxsiy kabinet</div>
+        <div class="date-label" id="dateLabel">Bugun</div>
+      </div>
+      <div class="sync-indicator" id="syncStatus" aria-live="polite">Tayyor</div>
+    </header>
+
+    <nav class="segmented-nav" role="tablist" aria-label="Bo'limlar">
+      <button type="button" class="seg-btn is-active" role="tab" aria-selected="true" data-tab="wallet">Hamyon</button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false" data-tab="debts">Qarzlar</button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false" data-tab="tasks">Vazifalar</button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false" data-tab="limits">Me'yor</button>
+    </nav>
+
+    <div class="toast-banner" id="toastBanner" hidden role="status"></div>
+
+    <main id="mainContent">
+      <!-- Tab 1: Hamyon -->
+      <section class="tab-panel is-active" id="panel-wallet" role="tabpanel">
+        <div class="surface balance-ledger">
+          <div class="ledger-primary">
+            <div class="field-label">Jami hamyon</div>
+            <div class="balance-display" id="walletTotal">0 ming</div>
+          </div>
+
+          <div class="ledger-split">
+            <div class="split-cell">
+              <div class="field-label">Karta (plastik)</div>
+              <div class="split-value" id="cardTotal">0 ming</div>
+              <div class="split-sub" id="cardMonthly">Oylik kirim: +0 ming</div>
+            </div>
+            <div class="split-cell">
+              <div class="field-label">Naqd pul</div>
+              <div class="split-value" id="cashTotal">0 ming</div>
+              <div class="split-sub" id="cashMonthly">Oylik kirim: +0 ming</div>
+            </div>
+          </div>
+
+          <div class="ledger-footer" id="apartmentRow" hidden>
+            <span class="field-label">Kvartira balansi</span>
+            <span class="footer-value" id="apartmentBalance">0 ming</span>
+          </div>
+        </div>
+
+        <form class="surface composer" id="recordForm" autocomplete="off">
+          <div class="composer-toggles">
+            <div class="segmented-pair" role="group" aria-label="Amal turi">
+              <button type="button" class="pair-btn is-active" data-type="expense">Chiqim</button>
+              <button type="button" class="pair-btn" data-type="income">Kirim</button>
+            </div>
+            <div class="segmented-pair" role="group" aria-label="To'lov usuli">
+              <button type="button" class="pair-btn is-active" data-method="card">Karta</button>
+              <button type="button" class="pair-btn" data-method="cash">Naqd</button>
+            </div>
+          </div>
+
+          <div class="composer-inputs">
+            <label class="input-group">
+              <span class="field-label">Summa</span>
+              <input
+                type="text"
+                id="recordAmount"
+                inputmode="decimal"
+                placeholder="Masalan: 40 ming yoki 500000"
+                required
+              />
+            </label>
+            <label class="input-group">
+              <span class="field-label">Izoh</span>
+              <input
+                type="text"
+                id="recordDesc"
+                placeholder="Tushlik, taksi yoki oylik..."
+              />
+            </label>
+          </div>
+
+          <button type="submit" class="primary-btn" id="submitRecordBtn">Saqlash</button>
+        </form>
+
+        <section class="surface list-block">
+          <div class="block-header">
+            <h2 class="section-heading">Shu oydagi xarajatlar</h2>
+            <span class="summary-meta" id="monthSpentTotal">0 ming</span>
+          </div>
+          <div class="category-list" id="categoryList"></div>
+        </section>
+
+        <section class="surface list-block">
+          <div class="block-header">
+            <h2 class="section-heading">So'nggi yozuvlar</h2>
+            <span class="summary-meta" id="recordsCount">0 ta</span>
+          </div>
+          <div class="ledger-rows" id="recordsList"></div>
+        </section>
+      </section>
+
+      <!-- Tab 2: Qarzlar -->
+      <section class="tab-panel" id="panel-debts" role="tabpanel" hidden>
+        <form class="surface composer" id="debtForm" autocomplete="off">
+          <div class="segmented-pair segmented-wide" role="group" aria-label="Qarz turi">
+            <button type="button" class="pair-btn is-active" data-direction="owe_me">Haqqim</button>
+            <button type="button" class="pair-btn" data-direction="i_owe">Qarzim</button>
+          </div>
+
+          <div class="composer-inputs">
+            <label class="input-group">
+              <span class="field-label">Ism</span>
+              <input type="text" id="debtPerson" placeholder="Masalan: Ali" required />
+            </label>
+            <label class="input-group">
+              <span class="field-label">Summa</span>
+              <input type="text" id="debtAmount" inputmode="decimal" placeholder="100 ming" required />
+            </label>
+          </div>
+
+          <label class="input-group">
+            <span class="field-label">Izoh (ixtiyoriy)</span>
+            <input type="text" id="debtNote" placeholder="Qaytarish sanasi yoki sababi" />
+          </label>
+
+          <button type="submit" class="primary-btn">Qarzni yozish</button>
+        </form>
+
+        <section class="surface list-block">
+          <div class="block-header">
+            <h2 class="section-heading">Ochiq qarzlar</h2>
+            <span class="summary-meta" id="debtsCount">0 ta</span>
+          </div>
+          <div class="ledger-rows" id="debtsList"></div>
+        </section>
+      </section>
+
+      <!-- Tab 3: Vazifalar -->
+      <section class="tab-panel" id="panel-tasks" role="tabpanel" hidden>
+        <section class="surface list-block">
+          <div class="block-header">
+            <h2 class="section-heading">Kunlik vazifalar</h2>
+            <span class="summary-meta" id="tasksProgress">0 / 0</span>
+          </div>
+          <div class="ledger-rows" id="tasksList"></div>
+
+          <form class="inline-form" id="taskForm" autocomplete="off">
+            <input type="text" id="newTaskInput" placeholder="Yangi vazifa nomi..." required />
+            <button type="submit" class="secondary-btn">Qo'shish</button>
+          </form>
+        </section>
+
+        <form class="surface composer" id="reminderForm" autocomplete="off">
+          <div class="block-header">
+            <h2 class="section-heading">Kunlik eslatma</h2>
+            <button type="button" class="switch-btn" id="reminderToggleBtn" aria-pressed="false">O'chirilgan</button>
+          </div>
+          <div class="inline-form">
+            <label class="input-group">
+              <span class="field-label">Vaqt (UZT, HH:MM)</span>
+              <input type="text" id="reminderTimeInput" placeholder="09:00" maxlength="5" />
+            </label>
+            <button type="submit" class="secondary-btn">Saqlash</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Tab 4: Me'yor (Limitlar) -->
+      <section class="tab-panel" id="panel-limits" role="tabpanel" hidden>
+        <section class="surface list-block">
+          <div class="block-header">
+            <h2 class="section-heading">Joriy sarf holati</h2>
+          </div>
+
+          <div class="limit-progress-row">
+            <div class="limit-labels">
+              <span class="field-label">Bugungi chiqim</span>
+              <span class="summary-meta" id="dailyLimitStat">0 ming</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill" id="dailyLimitBar"></div>
+            </div>
+          </div>
+
+          <div class="limit-progress-row">
+            <div class="limit-labels">
+              <span class="field-label">Oylik chiqim</span>
+              <span class="summary-meta" id="monthlyLimitStat">0 ming</span>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill" id="monthlyLimitBar"></div>
+            </div>
+          </div>
+        </section>
+
+        <form class="surface composer" id="limitsForm" autocomplete="off">
+          <h2 class="section-heading">Cheklovlarni sozlash</h2>
+          <div class="composer-inputs">
+            <label class="input-group">
+              <span class="field-label">Kunlik limit (UZS)</span>
+              <input type="text" id="dailyLimitInput" placeholder="Masalan: 150 ming" />
+            </label>
+            <label class="input-group">
+              <span class="field-label">Oylik limit (UZS)</span>
+              <input type="text" id="monthlyLimitInput" placeholder="Masalan: 4 mln" />
+            </label>
+          </div>
+          <button type="submit" class="primary-btn">Limitlarni saqlash</button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import {
   addPersonalRecord,
   getPersonalRecords,
   deletePersonalRecord,
+  togglePersonalRecordMethod,
   clearPersonalRecords,
   addPersonalDebt,
   getPersonalDebts,
@@ -21,6 +22,7 @@ import {
 } from './settlement.js';
 import { formatMoney, parseExpenseInput } from './format.js';
 
+export const MINI_APP_URL = 'https://app8656629226.tgcloud.ai/';
 const UZT_OFFSET_MS = 5 * 3600 * 1000;
 
 function toMs(val) {
@@ -43,7 +45,7 @@ function getUztParts(tsVal) {
   };
 }
 
-function detectExpenseCategory(description) {
+export function detectExpenseCategory(description) {
   const d = (description || '').toLowerCase();
   if (/(non|osh|shashlik|kafe|choy|suv|tushlik|kechki|nonushta|ovqat|somsa|lag'mon|lagmon|shaurma|burger|pizza|kola|fanta|kofe|coffee|lunch|dinner|food)/.test(d)) {
     return 'Ovqat';
@@ -61,6 +63,35 @@ function detectExpenseCategory(description) {
     return 'Aloqa';
   }
   return 'Boshqa';
+}
+
+export function extractPaymentMethod(rawDescription, fallbackMethod = 'card', isIncome = false) {
+  const raw = (rawDescription || '').trim();
+  const cashRegex = /\b(naqd|naxt|cash|qol)\b|(?:^|\s)qo['’`]?l(?=$|\s)/i;
+  const cardRegex = /\b(karta|kartaga|kartadan|card|plastik|uzcard|humo|click|payme)\b/i;
+
+  let paymentMethod = fallbackMethod === 'cash' ? 'cash' : 'card';
+  if (cashRegex.test(raw)) {
+    paymentMethod = 'cash';
+  } else if (cardRegex.test(raw)) {
+    paymentMethod = 'card';
+  }
+
+  let description = raw
+    .replace(/\b(naqd|naxt|cash|karta|kartaga|kartadan|card|plastik)\b/gi, '')
+    .replace(/^[-_\s,:;]+|[-_\s,:;]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  if (!description || description === 'Expense') {
+    description = isIncome ? 'Kirim' : 'Xarajat';
+  }
+
+  return { paymentMethod, description };
+}
+
+function methodLabel(method) {
+  return method === 'cash' ? 'Naqd' : 'Karta';
 }
 
 async function editOrSend(api, chatId, messageId, text, replyMarkup) {
@@ -89,24 +120,34 @@ export async function renderModeSelector(api, chatId, messageId = null) {
         { text: 'Shaxsiy kabinet', callback_data: 'ind:home' },
         { text: 'Guruh boshqaruvi', callback_data: 'adm:home' },
       ],
+      [
+        { text: 'Ilovani ochish (Mini App)', web_app: { url: MINI_APP_URL } },
+      ],
     ],
   };
   await editOrSend(api, chatId, messageId, text, replyMarkup);
 }
 
-function computePersonalStats(records) {
+export function computePersonalStats(records) {
   const { dateStr } = getUztTimeInfo();
   const monthStr = dateStr.slice(0, 7);
 
   let walletUzs = 0;
+  let cardBalanceUzs = 0;
+  let cashBalanceUzs = 0;
   let monthSpentUzs = 0;
+  let monthSpentCardUzs = 0;
+  let monthSpentCashUzs = 0;
   let monthIncomeUzs = 0;
+  let monthIncomeCardUzs = 0;
+  let monthIncomeCashUzs = 0;
   let todaySpentUzs = 0;
   const monthByCat = new Map();
   const otherCur = new Map();
 
   for (const r of records) {
     const cur = (r.currency || 'UZS').toUpperCase();
+    const method = r.paymentMethod === 'cash' ? 'cash' : 'card';
     const parts = getUztParts(r.createdAt);
     const inMonth = parts.monthStr === monthStr;
     const inToday = parts.dateStr === dateStr;
@@ -114,9 +155,23 @@ function computePersonalStats(records) {
     if (cur === 'UZS') {
       if (r.type === 'income') {
         walletUzs += r.amount;
+        if (method === 'cash') {
+          cashBalanceUzs += r.amount;
+          if (inMonth) monthIncomeCashUzs += r.amount;
+        } else {
+          cardBalanceUzs += r.amount;
+          if (inMonth) monthIncomeCardUzs += r.amount;
+        }
         if (inMonth) monthIncomeUzs += r.amount;
       } else {
         walletUzs -= r.amount;
+        if (method === 'cash') {
+          cashBalanceUzs -= r.amount;
+          if (inMonth) monthSpentCashUzs += r.amount;
+        } else {
+          cardBalanceUzs -= r.amount;
+          if (inMonth) monthSpentCardUzs += r.amount;
+        }
         if (inMonth) {
           monthSpentUzs += r.amount;
           monthByCat.set(r.category, (monthByCat.get(r.category) || 0) + r.amount);
@@ -131,8 +186,14 @@ function computePersonalStats(records) {
 
   return {
     walletUzs,
+    cardBalanceUzs,
+    cashBalanceUzs,
     monthSpentUzs,
+    monthSpentCardUzs,
+    monthSpentCashUzs,
     monthIncomeUzs,
+    monthIncomeCardUzs,
+    monthIncomeCashUzs,
     todaySpentUzs,
     monthByCat,
     otherCur,
@@ -149,8 +210,9 @@ export async function renderIndividualHome(api, chatId, messageId, userId, usern
 
   let text = notice ? `${notice}\n\n` : '';
   text += `Shaxsiy kabinet · ${formatUzDate(nowUzt)}\n\n`;
-  text += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')}\n`;
-  text += `Shu oy: -${formatMoney(stats.monthSpentUzs, 'UZS')} · +${formatMoney(stats.monthIncomeUzs, 'UZS')}\n`;
+  text += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})\n`;
+  text += `Shu oy kirim: +${formatMoney(stats.monthIncomeUzs, 'UZS')} (Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})\n`;
+  text += `Shu oy chiqim: -${formatMoney(stats.monthSpentUzs, 'UZS')}\n`;
 
   if (ps.dailyLimit > 0) {
     const rem = ps.dailyLimit - stats.todaySpentUzs;
@@ -173,9 +235,16 @@ export async function renderIndividualHome(api, chatId, messageId, userId, usern
     text += `Kunlik vazifalar: ${ps.completedTaskIndices.length} / ${ps.dailyTasks.length}\n`;
   }
 
-  text += `\nYozish: "40 ming tushlik" yoki "+ 500 ming oylik"`;
+  text += `\nYozish: "40 ming tushlik", "+ 500 ming naqd", "+ 2 mln karta"`;
 
   const rows = [
+    [
+      { text: 'Ilovani ochish (Mini App)', web_app: { url: MINI_APP_URL } },
+    ],
+    [
+      { text: '+ Kirim (Karta)', callback_data: 'ind:inc_card' },
+      { text: '+ Kirim (Naqd)', callback_data: 'ind:inc_cash' },
+    ],
     [
       { text: 'Hisobot', callback_data: 'ind:report' },
       { text: 'Yozuvlar', callback_data: 'ind:records' },
@@ -200,10 +269,10 @@ async function renderReport(api, chatId, messageId, userId, notice = '') {
 
   let text = notice ? `${notice}\n\n` : '';
   text += `Shaxsiy hisobot · ${formatUzDate(nowUzt)}\n\n`;
-  text += `Joriy hamyon: ${formatMoney(stats.walletUzs, 'UZS')}\n`;
+  text += `Joriy hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})\n`;
+  text += `Oylik kirim: +${formatMoney(stats.monthIncomeUzs, 'UZS')} (Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})\n`;
+  text += `Oylik chiqim: -${formatMoney(stats.monthSpentUzs, 'UZS')} (Karta: -${formatMoney(stats.monthSpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.monthSpentCashUzs, 'UZS')})\n`;
   text += `Bugungi chiqim: ${formatMoney(stats.todaySpentUzs, 'UZS')}\n`;
-  text += `Oylik kirim: +${formatMoney(stats.monthIncomeUzs, 'UZS')}\n`;
-  text += `Oylik chiqim: -${formatMoney(stats.monthSpentUzs, 'UZS')}\n`;
 
   if (stats.otherCur.size > 0) {
     text += `\nBoshqa valyutalar:\n`;
@@ -238,14 +307,20 @@ async function renderRecords(api, chatId, messageId, userId, notice = '') {
   const recent = await getPersonalRecords(userId, { limit: 12 });
   let text = notice ? `${notice}\n\n` : '';
   text += `So'nggi yozuvlar\n\n`;
-  text += recent.length === 0 ? "Hozircha yozuvlar yo'q." : "O'chirish uchun yozuvni bosing.";
+  text += recent.length === 0 ? "Hozircha yozuvlar yo'q." : "O'chirish yoki Karta/Naqd usulini almashtirish uchun bosing.";
 
   const rows = recent.map((r) => {
     const sign = r.type === 'income' ? '+' : '-';
+    const curMethod = r.paymentMethod === 'cash' ? 'cash' : 'card';
+    const nextLabel = curMethod === 'cash' ? '⇄ Karta' : '⇄ Naqd';
     return [
       {
-        text: `× ${sign}${formatMoney(r.amount, r.currency)} · ${r.description}`,
+        text: `× ${sign}${formatMoney(r.amount, r.currency)} · ${r.description} (${methodLabel(curMethod)})`,
         callback_data: `ind:r_del:${r.id}`,
+      },
+      {
+        text: nextLabel,
+        callback_data: `ind:r_pm:${r.id}`,
       },
     ];
   });
@@ -474,6 +549,40 @@ export async function handleIndividualMessage(api, message) {
       return;
     }
 
+    if (mode === 'ind_inc_card' || mode === 'ind_inc_cash') {
+      const cleanInput = text.replace(/^[+*]+/, '').trim();
+      const parsed = parseExpenseInput(cleanInput);
+      if (!parsed) {
+        await setAdminSession(userId, { awaitingInput: mode });
+        const hint = mode === 'ind_inc_cash'
+          ? 'Naqd kirim summasi va izohni yozing (masalan: 500 ming avans):'
+          : 'Karta orqali kirim summasi va izohni yozing (masalan: 2 mln oylik):';
+        await api.sendMessage({
+          chat_id: chatId,
+          text: hint,
+          reply_markup: getBackKeyboard('ind:home'),
+        });
+        return;
+      }
+      const fallbackMethod = mode === 'ind_inc_cash' ? 'cash' : 'card';
+      const { paymentMethod, description } = extractPaymentMethod(parsed.description, fallbackMethod, true);
+      const inserted = await addPersonalRecord({
+        userId,
+        type: 'income',
+        paymentMethod,
+        amount: parsed.amount,
+        currency: parsed.currency,
+        category: 'Kirim',
+        description,
+      });
+      const records = await getPersonalRecords(userId, { limit: 1000 });
+      const stats = computePersonalStats(records);
+      const ps = getPersonalSettings(session);
+      const payload = buildConfirmationPayload(inserted, stats, ps);
+      await api.sendMessage({ chat_id: chatId, ...payload });
+      return;
+    }
+
     if (mode === 'ind_lim_day' || mode === 'ind_lim_mon') {
       const parsed = parseExpenseInput(text);
       if (!parsed) {
@@ -507,42 +616,60 @@ export async function handleIndividualMessage(api, message) {
   }
 
   const type = isIncome ? 'income' : 'expense';
-  const category = isIncome ? 'Kirim' : detectExpenseCategory(parsed.description);
+  const { paymentMethod, description } = extractPaymentMethod(parsed.description, 'card', isIncome);
+  const category = isIncome ? 'Kirim' : detectExpenseCategory(description);
   const inserted = await addPersonalRecord({
     userId,
     type,
+    paymentMethod,
     amount: parsed.amount,
     currency: parsed.currency,
     category,
-    description: parsed.description,
+    description,
   });
 
   const records = await getPersonalRecords(userId, { limit: 1000 });
   const stats = computePersonalStats(records);
   const ps = getPersonalSettings(session);
+  const payload = buildConfirmationPayload(inserted, stats, ps);
 
-  let confirm = isIncome
-    ? `Kirim: +${formatMoney(parsed.amount, parsed.currency)} · ${parsed.description}\n`
-    : `Chiqim (${category}): -${formatMoney(parsed.amount, parsed.currency)} · ${parsed.description}\n`;
-  confirm += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')}`;
+  await api.sendMessage({
+    chat_id: chatId,
+    ...payload,
+  });
+}
 
-  if (!isIncome && ps.dailyLimit > 0 && parsed.currency === 'UZS') {
+function buildConfirmationPayload(record, stats, ps) {
+  const isIncome = record.type === 'income';
+  const method = record.paymentMethod === 'cash' ? 'cash' : 'card';
+  const sign = isIncome ? '+' : '-';
+  const header = isIncome
+    ? `Kirim (${methodLabel(method)})`
+    : `Chiqim (${record.category} · ${methodLabel(method)})`;
+
+  let confirm = `${header}: ${sign}${formatMoney(record.amount, record.currency)} · ${record.description}\n`;
+  confirm += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})`;
+
+  if (!isIncome && ps?.dailyLimit > 0 && record.currency === 'UZS') {
     const rem = ps.dailyLimit - stats.todaySpentUzs;
     confirm += `\nBugungi limit qoldig'i: ${formatMoney(rem, 'UZS')}`;
   }
 
-  await api.sendMessage({
-    chat_id: chatId,
+  return {
     text: confirm,
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '× Bekor qilish', callback_data: `ind:r_del:${inserted.id}` },
+          {
+            text: method === 'cash' ? '⇄ Karta' : '⇄ Naqd',
+            callback_data: `ind:r_pm:${record.id}`,
+          },
+          { text: '× Bekor qilish', callback_data: `ind:r_del:${record.id}` },
           { text: 'Kabinet', callback_data: 'ind:home' },
         ],
       ],
     },
-  });
+  };
 }
 
 export async function handleIndividualCallback(api, callbackQuery) {
@@ -576,6 +703,17 @@ export async function handleIndividualCallback(api, callbackQuery) {
     return;
   }
 
+  if (action === 'inc_card' || action === 'inc_cash') {
+    const inputKey = action === 'inc_cash' ? 'ind_inc_cash' : 'ind_inc_card';
+    await setAdminSession(userId, { mode: 'individual', awaitingInput: inputKey });
+    const prompt = action === 'inc_cash'
+      ? "Naqd kirim summasi va izohni yozing (masalan: 500 ming avans):"
+      : "Karta orqali kirim summasi va izohni yozing (masalan: 2 mln oylik):";
+    await editOrSend(api, chatId, messageId, prompt, getBackKeyboard('ind:home'));
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
   if (action === 'report') {
     await renderReport(api, chatId, messageId, userId);
     await api.answerCallbackQuery({ callback_query_id: cbId });
@@ -595,6 +733,24 @@ export async function handleIndividualCallback(api, callbackQuery) {
     }
     await renderRecords(api, chatId, messageId, userId, "Yozuv o'chirildi.");
     await api.answerCallbackQuery({ callback_query_id: cbId, text: "O'chirildi" });
+    return;
+  }
+
+  if (action === 'r_pm') {
+    const recId = parseInt(arg, 10);
+    const updated = !isNaN(recId) ? await togglePersonalRecordMethod(userId, recId) : null;
+    const msgText = callbackQuery.message?.text || '';
+    if (updated && (msgText.startsWith('Kirim') || msgText.startsWith('Chiqim'))) {
+      const session = await getAdminSession(userId);
+      const records = await getPersonalRecords(userId, { limit: 1000 });
+      const stats = computePersonalStats(records);
+      const ps = getPersonalSettings(session);
+      const payload = buildConfirmationPayload(updated, stats, ps);
+      await editOrSend(api, chatId, messageId, payload.text, payload.reply_markup);
+    } else {
+      await renderRecords(api, chatId, messageId, userId, updated ? `Usul: ${methodLabel(updated.paymentMethod)}` : '');
+    }
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: "Usul o'zgartirildi" });
     return;
   }
 
