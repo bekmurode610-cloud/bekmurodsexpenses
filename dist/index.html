@@ -118,6 +118,15 @@
             <button type="button" class="pair-btn" data-direction="i_owe">Qarzim</button>
           </div>
 
+          <div class="input-group">
+            <span class="field-label" id="debtWalletLabel">Hamyonga ta'siri</span>
+            <div class="segmented-triple" role="group" aria-label="Hamyonga ta'siri">
+              <button type="button" class="pair-btn is-active" data-debt-wallet="none">Hamyonsiz</button>
+              <button type="button" class="pair-btn" data-debt-wallet="card">Karta</button>
+              <button type="button" class="pair-btn" data-debt-wallet="cash">Naqd</button>
+            </div>
+          </div>
+
           <div class="composer-inputs">
             <label class="input-group">
               <span class="field-label">Ism</span>
@@ -228,6 +237,32 @@
       <p class="confirm-desc" id="confirmDesc"></p>
       <div class="confirm-actions" id="confirmActions"></div>
     </div>
+  </div>
+
+  <div class="confirm-backdrop" id="debtPayBackdrop" hidden>
+    <form class="confirm-dialog" id="debtPayForm" role="dialog" aria-modal="true" aria-labelledby="debtPayTitle" aria-describedby="debtPayDesc" autocomplete="off">
+      <h3 class="confirm-title" id="debtPayTitle">Qarz qaytarilishi</h3>
+      <p class="confirm-desc" id="debtPayDesc"></p>
+
+      <label class="input-group">
+        <span class="field-label">Summa (qisman yoki to'liq)</span>
+        <input type="text" id="debtPayAmount" inputmode="decimal" required />
+      </label>
+
+      <div class="input-group">
+        <span class="field-label" id="debtPayWalletLabel">Qaysi hamyonga tushadi?</span>
+        <div class="segmented-triple" role="group" aria-label="Hamyon usuli">
+          <button type="button" class="pair-btn is-active" data-repay-wallet="card">Karta</button>
+          <button type="button" class="pair-btn" data-repay-wallet="cash">Naqd</button>
+          <button type="button" class="pair-btn" data-repay-wallet="none">Hamyonsiz</button>
+        </div>
+      </div>
+
+      <div class="confirm-actions">
+        <button type="button" class="secondary-btn" id="debtPayCancelBtn">Bekor qilish</button>
+        <button type="submit" class="primary-btn" id="debtPaySubmitBtn">Saqlash</button>
+      </div>
+    </form>
   </div>
 
   <script src="/app.js"></script>

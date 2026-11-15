@@ -10,7 +10,6 @@ import {
   clearPersonalRecords,
   addPersonalDebt,
   getPersonalDebts,
-  markPersonalDebtPaid,
   getUserApartmentBalance,
 } from '../lib/db-service.js';
 import { getUztTimeInfo, formatUzDate, getPersonalSettings } from '../lib/settlement.js';
@@ -19,6 +18,8 @@ import {
   computePersonalStats,
   detectExpenseCategory,
   extractPaymentMethod,
+  applyDebtCreationWalletImpact,
+  applyDebtRepayment,
 } from '../lib/individual-panel.js';
 
 function parseLimitAmount(val) {
@@ -212,6 +213,9 @@ export default async function (input, ctx) {
       throw new EndpointError("Qarz summasini to'g'ri kiriting", { code: 'INVALID_AMOUNT' });
     }
     const note = String(input.note || '').trim();
+    const walletMethod =
+      input.walletMethod === 'card' || input.walletMethod === 'cash' ? input.walletMethod : 'none';
+
     await addPersonalDebt({
       userId,
       direction,
@@ -220,15 +224,56 @@ export default async function (input, ctx) {
       currency: parsed.currency,
       note,
     });
+    await applyDebtCreationWalletImpact({
+      userId,
+      direction,
+      personName,
+      amount: parsed.amount,
+      currency: parsed.currency,
+      note,
+      walletMethod,
+    });
     return await buildAppState(user);
   }
 
   if (action === 'pay_debt') {
     const debtId = parseInt(input.debtId, 10);
-    if (!isNaN(debtId)) {
-      await markPersonalDebtPaid(userId, debtId);
+    if (isNaN(debtId)) {
+      throw new EndpointError('Qarz topilmadi', { code: 'NOT_FOUND' });
     }
-    return await buildAppState(user);
+
+    let payAmount = null;
+    if (input.amountInput !== undefined && String(input.amountInput).trim() !== '') {
+      const parsed = parseExpenseInput(String(input.amountInput).trim());
+      if (!parsed || parsed.amount <= 0) {
+        throw new EndpointError("Qaytarilgan summani to'g'ri kiriting", {
+          code: 'INVALID_AMOUNT',
+        });
+      }
+      payAmount = parsed.amount;
+    } else if (input.amount !== undefined && input.amount !== null && input.amount !== '') {
+      const num = Number(input.amount);
+      if (!Number.isFinite(num) || num <= 0) {
+        throw new EndpointError("Summa musbat bo'lishi kerak", { code: 'INVALID_AMOUNT' });
+      }
+      payAmount = num >= 10000 ? num / 1000 : num;
+    }
+
+    const walletMethod =
+      input.walletMethod === 'card' || input.walletMethod === 'cash' ? input.walletMethod : 'none';
+
+    const result = await applyDebtRepayment({
+      userId,
+      debtId,
+      payAmount,
+      walletMethod,
+    });
+    if (!result) {
+      throw new EndpointError('Qarz topilmadi', { code: 'NOT_FOUND' });
+    }
+
+    const state = await buildAppState(user);
+    return { ...state, lastRepayment: { paid: result.paid, remaining: result.remaining, closed: result.closed } };
   }
 
   if (action === 'toggle_task') {

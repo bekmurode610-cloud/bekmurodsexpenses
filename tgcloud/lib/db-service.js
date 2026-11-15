@@ -659,6 +659,49 @@ export async function getPersonalDebts(userId) {
     .all();
 }
 
+export async function getPersonalDebtById(userId, debtId) {
+  return await db
+    .select()
+    .from(personalDebts)
+    .where(and(eq(personalDebts.id, debtId), eq(personalDebts.userId, userId)))
+    .get();
+}
+
+export async function repayPersonalDebt(userId, debtId, payAmount = null) {
+  const row = await db
+    .select()
+    .from(personalDebts)
+    .where(
+      and(
+        eq(personalDebts.id, debtId),
+        eq(personalDebts.userId, userId),
+        eq(personalDebts.isPaid, 0)
+      )
+    )
+    .get();
+  if (!row) return null;
+
+  const requested = payAmount !== null && payAmount !== undefined ? Number(payAmount) : row.amount;
+  const paid = requested > 0 ? Math.min(requested, row.amount) : row.amount;
+  const rawRemaining = Math.round((row.amount - paid) * 1000) / 1000;
+  const closed = rawRemaining <= 0.001;
+  const remaining = closed ? 0 : rawRemaining;
+
+  const [updated] = await db
+    .update(personalDebts)
+    .set(closed ? { isPaid: 1 } : { amount: remaining })
+    .where(and(eq(personalDebts.id, debtId), eq(personalDebts.userId, userId)))
+    .returning()
+    .run();
+
+  return {
+    debt: updated || row,
+    paid,
+    remaining,
+    closed,
+  };
+}
+
 export async function markPersonalDebtPaid(userId, debtId) {
   await db
     .update(personalDebts)

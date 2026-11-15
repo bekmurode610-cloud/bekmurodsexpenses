@@ -9,7 +9,8 @@ import {
   clearPersonalRecords,
   addPersonalDebt,
   getPersonalDebts,
-  markPersonalDebtPaid,
+  getPersonalDebtById,
+  repayPersonalDebt,
   getUserApartmentBalance,
   touchMessageDeletion,
   cancelMessageDeletion,
@@ -353,15 +354,15 @@ async function renderDebts(api, chatId, messageId, userId, notice = '') {
         text += `• ${d.personName}: ${formatMoney(d.amount, d.currency)}${d.note ? ` (${d.note})` : ''}\n`;
       });
     }
-    text += `\nQaytarilganini yopish uchun pastdan bosing.`;
+    text += `\nQaytarish yoki qisman to'lash uchun qarz ustiga bosing.`;
   }
 
   const rows = debts.slice(0, 10).map((d) => {
     const tag = d.direction === 'owe_me' ? 'Haqqim' : 'Qarzim';
     return [
       {
-        text: `✓ ${tag}: ${d.personName} (${formatMoney(d.amount, d.currency)})`,
-        callback_data: `ind:d_pay:${d.id}`,
+        text: `${tag}: ${d.personName} (${formatMoney(d.amount, d.currency)})`,
+        callback_data: `ind:d_open:${d.id}`,
       },
     ];
   });
@@ -373,6 +374,92 @@ async function renderDebts(api, chatId, messageId, userId, notice = '') {
   rows.push([{ text: '← Orqaga', callback_data: 'ind:home' }]);
 
   await editOrSend(api, chatId, messageId, text.trim(), { inline_keyboard: rows });
+}
+
+export async function applyDebtCreationWalletImpact({
+  userId,
+  direction,
+  personName,
+  amount,
+  currency = 'UZS',
+  note = '',
+  walletMethod = 'none',
+}) {
+  if (walletMethod !== 'card' && walletMethod !== 'cash') return null;
+  const isOweMe = direction === 'owe_me';
+  return await addPersonalRecord({
+    userId,
+    type: isOweMe ? 'expense' : 'income',
+    paymentMethod: walletMethod,
+    amount,
+    currency,
+    category: isOweMe ? 'Qarz' : 'Kirim',
+    description: `${personName} ${isOweMe ? 'ga qarz' : 'dan qarz'}${note ? ` (${note})` : ''}`,
+  });
+}
+
+export async function applyDebtRepayment({
+  userId,
+  debtId,
+  payAmount = null,
+  walletMethod = 'none',
+}) {
+  const res = await repayPersonalDebt(userId, debtId, payAmount);
+  if (!res) return null;
+
+  if (walletMethod === 'card' || walletMethod === 'cash') {
+    const isOweMe = res.debt.direction === 'owe_me';
+    const desc = isOweMe
+      ? res.closed
+        ? `${res.debt.personName} qarz qaytardi`
+        : `${res.debt.personName} qarzdan qaytardi`
+      : res.closed
+      ? `${res.debt.personName} ga qarz to'landi`
+      : `${res.debt.personName} ga qisman qarz`;
+
+    await addPersonalRecord({
+      userId,
+      type: isOweMe ? 'income' : 'expense',
+      paymentMethod: walletMethod,
+      amount: res.paid,
+      currency: res.debt.currency || 'UZS',
+      category: isOweMe ? 'Kirim' : 'Qarz',
+      description: desc,
+    });
+  }
+  return res;
+}
+
+async function renderDebtDetail(api, chatId, messageId, userId, debtId) {
+  const debt = await getPersonalDebtById(userId, debtId);
+  if (!debt || debt.isPaid) {
+    await renderDebts(api, chatId, messageId, userId, "Qarz topilmadi.");
+    return;
+  }
+
+  const isOweMe = debt.direction === 'owe_me';
+  const title = isOweMe ? `${debt.personName} · Haqqim` : `${debt.personName} · Qarzim`;
+  const actionNote = isOweMe
+    ? "Qaytarilgan summa hamyoningizga Kirim sifatida qo'shiladi."
+    : "To'langan summa hamyoningizdan chiqim sifatida ayriladi.";
+
+  let text = `${title}\nQoldiq: ${formatMoney(debt.amount, debt.currency)}`;
+  if (debt.note) text += `\nIzoh: ${debt.note}`;
+  text += `\n\n${actionNote}`;
+
+  const rows = [
+    [
+      { text: "✓ To'liq · Karta", callback_data: `ind:d_exec:${debt.id}:full:card` },
+      { text: "✓ To'liq · Naqd", callback_data: `ind:d_exec:${debt.id}:full:cash` },
+    ],
+    [
+      { text: 'Qisman qaytarish', callback_data: `ind:d_part:${debt.id}` },
+      { text: 'Hamyonsiz yopish', callback_data: `ind:d_exec:${debt.id}:full:none` },
+    ],
+    [{ text: '← Orqaga', callback_data: 'ind:debts' }],
+  ];
+
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
 
 async function renderTasks(api, chatId, messageId, userId, editMode = false, notice = '') {
@@ -462,7 +549,24 @@ function parseDebtInput(rawText) {
   const desc = (parsed.description || '').trim();
   if (!desc || desc === 'Expense') return null;
 
-  const words = desc.split(/\s+/).filter(Boolean);
+  let walletMethod = 'none';
+  if (/\b(naqd|naxt|cash|qol)\b|(?:^|\s)qo['’`]?l(?=$|\s)/i.test(desc)) {
+    walletMethod = 'cash';
+  } else if (/\b(karta|kartaga|kartadan|card|plastik)\b/i.test(desc)) {
+    walletMethod = 'card';
+  }
+
+  const cleanedDesc =
+    walletMethod === 'none'
+      ? desc
+      : desc
+          .replace(/\b(naqd|naxt|cash|qol|karta|kartaga|kartadan|card|plastik)\b/gi, '')
+          .replace(/(?:^|\s)qo['’`]?l(?=$|\s)/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+
+  const words = cleanedDesc.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
   const personName = words[0];
   const note = words.slice(1).join(' ');
   return {
@@ -470,6 +574,7 @@ function parseDebtInput(rawText) {
     amount: parsed.amount,
     currency: parsed.currency,
     note,
+    walletMethod,
   };
 }
 
@@ -509,20 +614,89 @@ export async function handleIndividualMessage(api, message) {
         await setAdminSession(userId, { awaitingInput: mode });
         await api.sendMessage({
           chat_id: chatId,
-          text: "Ism va summani yozing (masalan: Ali 50 ming tushlik):",
+          text: "Ism va summani yozing (hamyondan yechish uchun karta/naqd qo'shing, masalan: Ali 50 ming karta):",
           reply_markup: getBackKeyboard('ind:debts'),
         });
         return;
       }
+      const direction = mode === 'ind_add_om' ? 'owe_me' : 'i_owe';
       await addPersonalDebt({
         userId,
-        direction: mode === 'ind_add_om' ? 'owe_me' : 'i_owe',
+        direction,
         personName: parsed.personName,
         amount: parsed.amount,
         currency: parsed.currency,
         note: parsed.note,
       });
-      await renderDebts(api, chatId, null, userId, `${parsed.personName} saqlandi.`);
+      await applyDebtCreationWalletImpact({
+        userId,
+        direction,
+        personName: parsed.personName,
+        amount: parsed.amount,
+        currency: parsed.currency,
+        note: parsed.note,
+        walletMethod: parsed.walletMethod,
+      });
+      const walletNote =
+        parsed.walletMethod === 'none'
+          ? ''
+          : ` (${methodLabel(parsed.walletMethod)} hamyon yangilandi)`;
+      await renderDebts(api, chatId, null, userId, `${parsed.personName} saqlandi${walletNote}.`);
+      return;
+    }
+
+    if (mode.startsWith('ind_d_part:')) {
+      const debtId = parseInt(mode.split(':')[1], 10);
+      const parsed = parseExpenseInput(text.replace(/^[+*]+/, '').trim());
+      if (!parsed || isNaN(debtId)) {
+        await setAdminSession(userId, { awaitingInput: mode });
+        await api.sendMessage({
+          chat_id: chatId,
+          text: "Qaytarilgan summani yozing (masalan: 50 ming yoki 50 ming naqd):",
+          reply_markup: getBackKeyboard(`ind:d_open:${debtId}`),
+        });
+        return;
+      }
+
+      const rawDesc = text.toLowerCase();
+      let explicitMethod = null;
+      if (/\b(naqd|naxt|cash)\b/.test(rawDesc)) explicitMethod = 'cash';
+      else if (/\b(karta|card|plastik|uzcard|humo|click|payme)\b/.test(rawDesc)) explicitMethod = 'card';
+
+      if (explicitMethod) {
+        const res = await applyDebtRepayment({
+          userId,
+          debtId,
+          payAmount: parsed.amount,
+          walletMethod: explicitMethod,
+        });
+        const notice = res
+          ? res.closed
+            ? `${res.debt.personName} qarzi yopildi (${methodLabel(explicitMethod)}).`
+            : `${formatMoney(res.paid, res.debt.currency)} qabul qilindi (${methodLabel(explicitMethod)}). Qoldiq: ${formatMoney(res.remaining, res.debt.currency)}.`
+          : 'Qarz topilmadi.';
+        await renderDebts(api, chatId, null, userId, notice);
+        return;
+      }
+
+      const debt = await getPersonalDebtById(userId, debtId);
+      const label = debt ? `${debt.personName}: ${formatMoney(parsed.amount, debt.currency)}` : formatMoney(parsed.amount, parsed.currency);
+      await api.sendMessage({
+        chat_id: chatId,
+        text: `${label}\n\nQaysi hamyonga yozilsin?`,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Karta (Kirim)', callback_data: `ind:d_exec:${debtId}:${parsed.amount}:card` },
+              { text: 'Naqd (Kirim)', callback_data: `ind:d_exec:${debtId}:${parsed.amount}:cash` },
+            ],
+            [
+              { text: 'Hamyonsiz', callback_data: `ind:d_exec:${debtId}:${parsed.amount}:none` },
+              { text: '← Orqaga', callback_data: `ind:d_open:${debtId}` },
+            ],
+          ],
+        },
+      });
       return;
     }
 
@@ -858,13 +1032,51 @@ export async function handleIndividualCallback(api, callbackQuery) {
     return;
   }
 
-  if (action === 'd_pay') {
+  if (action === 'd_open' || action === 'd_pay') {
     const debtId = parseInt(arg, 10);
     if (!isNaN(debtId)) {
-      await markPersonalDebtPaid(userId, debtId);
+      await renderDebtDetail(api, chatId, messageId, userId, debtId);
+    } else {
+      await renderDebts(api, chatId, messageId, userId);
     }
-    await renderDebts(api, chatId, messageId, userId, 'Qarz yopildi.');
-    await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Yopildi' });
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'd_part') {
+    const debtId = parseInt(arg, 10);
+    if (!isNaN(debtId)) {
+      await setAdminSession(userId, { mode: 'individual', awaitingInput: `ind_d_part:${debtId}` });
+      await editOrSend(
+        api,
+        chatId,
+        messageId,
+        "Qancha qaytarildi? Summani yozing (xohlasangiz naqd/karta qo'shing, masalan: 50 ming yoki 50 ming naqd):",
+        getBackKeyboard(`ind:d_open:${debtId}`)
+      );
+    }
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'd_exec') {
+    const [idStr, amtStr, methodStr] = arg.split(':');
+    const debtId = parseInt(idStr, 10);
+    const payAmount = amtStr === 'full' ? null : parseFloat(amtStr);
+    const walletMethod = methodStr === 'card' || methodStr === 'cash' ? methodStr : 'none';
+    const res = !isNaN(debtId)
+      ? await applyDebtRepayment({ userId, debtId, payAmount, walletMethod })
+      : null;
+
+    let notice = 'Qarz topilmadi.';
+    if (res) {
+      const mText = walletMethod === 'none' ? '' : ` · ${methodLabel(walletMethod)}`;
+      notice = res.closed
+        ? `${res.debt.personName} qarzi yopildi (${formatMoney(res.paid, res.debt.currency)}${mText}).`
+        : `${formatMoney(res.paid, res.debt.currency)} qabul qilindi${mText}. Qoldiq: ${formatMoney(res.remaining, res.debt.currency)}.`;
+    }
+    await renderDebts(api, chatId, messageId, userId, notice);
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: res?.closed ? 'Yopildi' : 'Saqlandi' });
     return;
   }
 
@@ -872,8 +1084,8 @@ export async function handleIndividualCallback(api, callbackQuery) {
     const inputKey = action === 'd_add_om' ? 'ind_add_om' : 'ind_add_io';
     await setAdminSession(userId, { mode: 'individual', awaitingInput: inputKey });
     const prompt = action === 'd_add_om'
-      ? "Kimga qarz berdingiz? Ism va summani yozing (masalan: Ali 50 ming):"
-      : "Kimdan qarz oldingiz? Ism va summani yozing (masalan: Vali 100 ming):";
+      ? "Kimga qarz berdingiz? Ism va summani yozing (hamyondan yechish uchun karta/naqd qo'shing, masalan: Ali 50 ming karta):"
+      : "Kimdan qarz oldingiz? Ism va summani yozing (hamyonga qo'shish uchun karta/naqd yozing, masalan: Vali 100 ming naqd):";
     await editOrSend(api, chatId, messageId, prompt, getBackKeyboard('ind:debts'));
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;

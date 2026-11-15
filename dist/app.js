@@ -6,6 +6,9 @@
     recordType: 'expense',
     paymentMethod: 'card',
     debtDirection: 'owe_me',
+    debtWalletMethod: 'none',
+    repayWalletMethod: 'card',
+    activeDebt: null,
     busy: false,
     data: null,
     toastTimer: null,
@@ -177,6 +180,41 @@
     backdrop.hidden = false;
   }
 
+  function closeDebtPayDialog() {
+    state.activeDebt = null;
+    const backdrop = document.getElementById('debtPayBackdrop');
+    if (backdrop) backdrop.hidden = true;
+  }
+
+  function openDebtPayDialog(debt) {
+    state.activeDebt = debt;
+    state.repayWalletMethod = 'card';
+
+    const titleEl = document.getElementById('debtPayTitle');
+    const descEl = document.getElementById('debtPayDesc');
+    const amtEl = document.getElementById('debtPayAmount');
+    const walletLabelEl = document.getElementById('debtPayWalletLabel');
+    const backdrop = document.getElementById('debtPayBackdrop');
+    if (!backdrop || !titleEl || !descEl || !amtEl || !walletLabelEl) return;
+
+    const isOweMe = debt.direction === 'owe_me';
+    titleEl.textContent = isOweMe ? 'Qarz qaytarilishi' : "Qarzni to'lash";
+    descEl.textContent =
+      debt.personName + ' · Joriy qoldiq: ' + formatMoney(debt.amount, debt.currency);
+    walletLabelEl.textContent = isOweMe
+      ? "Qaysi hamyonga tushadi? (Kirim)"
+      : "Qaysi hamyondan to'lanadi?";
+
+    const cur = (debt.currency || 'UZS').toUpperCase();
+    amtEl.value = cur === 'UZS' ? String(debt.amount) + ' ming' : String(debt.amount) + ' ' + cur;
+
+    document.querySelectorAll('.pair-btn[data-repay-wallet]').forEach((b) => {
+      b.classList.toggle('is-active', b.getAttribute('data-repay-wallet') === 'card');
+    });
+
+    backdrop.hidden = false;
+  }
+
   function renderHeader() {
     if (!state.data) return;
     const nameEl = document.getElementById('userName');
@@ -332,19 +370,15 @@
         )
       );
 
-      const payBtn = el('button', 'method-toggle', 'Yopish');
+      const payBtn = el(
+        'button',
+        'method-toggle',
+        d.direction === 'owe_me' ? 'Qaytarish' : "To'lash"
+      );
       payBtn.type = 'button';
       payBtn.addEventListener('click', () => {
         haptic('light');
-        openConfirmDialog({
-          twoStep: false,
-          title1: 'Qarzni yopasizmi?',
-          desc1: d.personName + ' (' + formatMoney(d.amount, d.currency) + ') yopilgan deb belgilanadi.',
-          confirmLabel1: 'Ha, yopish',
-          onConfirm: () => {
-            runAction({ action: 'pay_debt', debtId: d.id }, 'Yopilmoqda...', 'Qarz yopildi');
-          },
-        });
+        openDebtPayDialog(d);
       });
 
       actions.appendChild(payBtn);
@@ -473,6 +507,18 @@
     renderLimits();
   }
 
+  function bindSegmentedGroup(attrName, onSelect) {
+    const buttons = document.querySelectorAll('.pair-btn[' + attrName + ']');
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        haptic('light');
+        const val = btn.getAttribute(attrName);
+        buttons.forEach((b) => b.classList.toggle('is-active', b === btn));
+        onSelect(val);
+      });
+    });
+  }
+
   function bindNavigation() {
     document.querySelectorAll('.seg-btn[data-tab]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -495,34 +541,24 @@
       });
     });
 
-    document.querySelectorAll('.pair-btn[data-type]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        haptic('light');
-        state.recordType = btn.getAttribute('data-type');
-        document.querySelectorAll('.pair-btn[data-type]').forEach((b) => {
-          b.classList.toggle('is-active', b === btn);
-        });
-      });
+    bindSegmentedGroup('data-type', (v) => {
+      state.recordType = v;
     });
-
-    document.querySelectorAll('.pair-btn[data-method]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        haptic('light');
-        state.paymentMethod = btn.getAttribute('data-method');
-        document.querySelectorAll('.pair-btn[data-method]').forEach((b) => {
-          b.classList.toggle('is-active', b === btn);
-        });
-      });
+    bindSegmentedGroup('data-method', (v) => {
+      state.paymentMethod = v;
     });
-
-    document.querySelectorAll('.pair-btn[data-direction]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        haptic('light');
-        state.debtDirection = btn.getAttribute('data-direction');
-        document.querySelectorAll('.pair-btn[data-direction]').forEach((b) => {
-          b.classList.toggle('is-active', b === btn);
-        });
-      });
+    bindSegmentedGroup('data-direction', (v) => {
+      state.debtDirection = v;
+      const lbl = document.getElementById('debtWalletLabel');
+      if (lbl) {
+        lbl.textContent = v === 'owe_me' ? "Qaysi hamyondan berildi?" : "Qaysi hamyonga olindi?";
+      }
+    });
+    bindSegmentedGroup('data-debt-wallet', (v) => {
+      state.debtWalletMethod = v;
+    });
+    bindSegmentedGroup('data-repay-wallet', (v) => {
+      state.repayWalletMethod = v;
     });
   }
 
@@ -569,6 +605,7 @@
         {
           action: 'add_debt',
           direction: state.debtDirection,
+          walletMethod: state.debtWalletMethod,
           personName,
           amountInput,
           note,
@@ -582,6 +619,45 @@
         noteEl.value = '';
       }
     });
+
+    const debtPayForm = document.getElementById('debtPayForm');
+    if (debtPayForm) {
+      debtPayForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!state.activeDebt) return;
+        const debt = state.activeDebt;
+        const amountInput = document.getElementById('debtPayAmount').value.trim();
+        if (!amountInput) return;
+
+        haptic('medium');
+        const ok = await runAction(
+          {
+            action: 'pay_debt',
+            debtId: debt.id,
+            amountInput,
+            walletMethod: state.repayWalletMethod,
+          },
+          'Saqlanmoqda...'
+        );
+        if (ok) {
+          const rep = state.data && state.data.lastRepayment;
+          closeDebtPayDialog();
+          if (rep) {
+            const msg = rep.closed
+              ? 'Qarz yopildi (' + formatMoney(rep.paid, debt.currency) + ')'
+              : formatMoney(rep.paid, debt.currency) +
+                ' qaytarildi · Qoldiq: ' +
+                formatMoney(rep.remaining, debt.currency);
+            showToast(msg, false);
+          }
+        }
+      });
+    }
+
+    const debtPayCancelBtn = document.getElementById('debtPayCancelBtn');
+    if (debtPayCancelBtn) {
+      debtPayCancelBtn.addEventListener('click', closeDebtPayDialog);
+    }
 
     document.getElementById('taskForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -638,8 +714,17 @@
         if (e.target === backdrop) closeConfirmDialog();
       });
     }
+    const debtPayBackdrop = document.getElementById('debtPayBackdrop');
+    if (debtPayBackdrop) {
+      debtPayBackdrop.addEventListener('click', (e) => {
+        if (e.target === debtPayBackdrop) closeDebtPayDialog();
+      });
+    }
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeConfirmDialog();
+      if (e.key === 'Escape') {
+        closeConfirmDialog();
+        closeDebtPayDialog();
+      }
     });
   }
 

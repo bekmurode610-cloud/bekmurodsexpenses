@@ -246,13 +246,18 @@ body {
   gap: 10px;
 }
 
-.segmented-pair {
+.segmented-pair,
+.segmented-triple {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 3px;
   padding: 3px;
   background-color: var(--bg-subtle);
   border-radius: var(--radius-control);
+}
+
+.segmented-triple {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .segmented-wide {
@@ -709,7 +714,8 @@ input[type='text']:focus {
   gap: 8px;
 }
 
-.confirm-actions .secondary-btn {
+.confirm-actions .secondary-btn,
+.confirm-actions .primary-btn {
   width: 100%;
   padding: 11px 12px;
   font-size: var(--text-sm);
