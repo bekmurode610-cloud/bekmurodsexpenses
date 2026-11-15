@@ -145,6 +145,11 @@ async function renderHome(api, chatId, messageId, ctxData, notice = '') {
   ];
   if (allGroups.length > 1) {
     rows[2].push({ text: 'Guruhlar', callback_data: 'adm:groups' });
+  } else {
+    rows[2].push({ text: '⇄ Shaxsiy', callback_data: 'ind:home' });
+  }
+  if (allGroups.length > 1) {
+    rows.push([{ text: '⇄ Shaxsiy kabinet', callback_data: 'ind:home' }]);
   }
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -576,7 +581,7 @@ export async function handleAdminCallback(api, callbackQuery) {
   }
 
   if (action === 'home') {
-    await setAdminSession(userId, { awaitingInput: null });
+    await setAdminSession(userId, { mode: 'group', awaitingInput: null });
     await renderHome(api, chatId, messageId, ctxData);
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;

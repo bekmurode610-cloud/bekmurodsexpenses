@@ -22,6 +22,7 @@ import {
 } from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
 import { handleAdminCallback } from '../lib/admin-panel.js';
+import { handleIndividualCallback } from '../lib/individual-panel.js';
 
 export function getDutyAdminKeyboard(isDone) {
   if (isDone) {
@@ -55,6 +56,12 @@ export default async function (callbackQuery, ctx) {
 
   if (!chatId || !messageId) {
     await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  // Individual Personal Mode callbacks
+  if (data && data.startsWith('ind:')) {
+    await handleIndividualCallback(api, callbackQuery);
     return;
   }
 

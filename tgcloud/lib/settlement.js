@@ -340,3 +340,51 @@ export function buildDetailReportText(groupMembers, allExpenses, grp) {
 
   return resp.trim();
 }
+
+export const DEFAULT_PERSONAL_TASKS = ['Sport', "Kitob o'qish"];
+
+export function getPersonalSettings(session) {
+  const raw =
+    session && typeof session.personalSettings === 'object' && session.personalSettings
+      ? session.personalSettings
+      : {};
+  const { dateStr } = getUztTimeInfo();
+  const dailyTasks = Array.isArray(raw.dailyTasks) ? raw.dailyTasks : [...DEFAULT_PERSONAL_TASKS];
+  const sameDay = raw.completedTasksDate === dateStr;
+  const completedTaskIndices = sameDay && Array.isArray(raw.completedTaskIndices)
+    ? raw.completedTaskIndices.filter((i) => Number.isInteger(i) && i >= 0 && i < dailyTasks.length)
+    : [];
+
+  return {
+    dailyLimit: Number(raw.dailyLimit) > 0 ? Number(raw.dailyLimit) : 0,
+    monthlyLimit: Number(raw.monthlyLimit) > 0 ? Number(raw.monthlyLimit) : 0,
+    dailyTasks,
+    completedTasksDate: sameDay ? dateStr : dateStr,
+    completedTaskIndices,
+    reminderTime: raw.reminderTime || '09:00',
+    reminderEnabled: Boolean(raw.reminderEnabled),
+    lastReminderDate: raw.lastReminderDate || null,
+  };
+}
+
+export function buildPersonalReminderPayload(tasks, completedIndices, dateLabel) {
+  const doneSet = new Set(completedIndices);
+  const doneCount = doneSet.size;
+  const totalCount = tasks.length;
+  const allDone = totalCount > 0 && doneCount === totalCount;
+
+  const text =
+    `Kunlik vazifalar · ${dateLabel}\n\n` +
+    (totalCount === 0
+      ? "Vazifalar ro'yxati bo'sh."
+      : `Bajarildi: ${doneCount} / ${totalCount}${allDone ? ' · Hammasi tayyor' : ''}`);
+
+  const rows = tasks.map((task, idx) => {
+    const isDone = doneSet.has(idx);
+    const shortTask = task.length > 28 ? `${task.slice(0, 27)}…` : task;
+    return [{ text: `${isDone ? '✓' : '☐'} ${shortTask}`, callback_data: `ind:tk_rtg:${idx}` }];
+  });
+  rows.push([{ text: 'Shaxsiy kabinet', callback_data: 'ind:home' }]);
+
+  return { text, reply_markup: { inline_keyboard: rows }, allDone };
+}

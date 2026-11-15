@@ -1,6 +1,15 @@
 import { db } from 'sdk';
 import { eq, and, desc, gte, lte, asc } from 'sdk/db';
-import { groups, members, expenses, userRoles, pendingDeletions, adminSessions } from '../schema.js';
+import {
+  groups,
+  members,
+  expenses,
+  userRoles,
+  pendingDeletions,
+  adminSessions,
+  personalRecords,
+  personalDebts,
+} from '../schema.js';
 import {
   getUztTimeInfo,
   getDutyRosterList,
@@ -10,6 +19,9 @@ import {
   formatMinimalDutyNotification,
   getDutyAdminKeyboard,
   getGroupSettings,
+  calculateBalances,
+  getPersonalSettings,
+  buildPersonalReminderPayload,
 } from './settlement.js';
 
 function normalizeName(str) {
@@ -543,4 +555,152 @@ export async function sendAutoDeleteMessage(
     }
   }
   return sent;
+}
+
+// --- Individual Mode Persistence & Reminders ---
+
+export async function updatePersonalSettings(userId, partial) {
+  const session = await getAdminSession(userId);
+  const current = session?.personalSettings && typeof session.personalSettings === 'object'
+    ? session.personalSettings
+    : {};
+  const next = { ...current, ...partial };
+  await setAdminSession(userId, { personalSettings: next });
+  return getPersonalSettings({ ...session, personalSettings: next });
+}
+
+export async function addPersonalRecord({ userId, type, amount, currency = 'UZS', category, description }) {
+  const [inserted] = await db
+    .insert(personalRecords)
+    .values({
+      userId,
+      type,
+      amount,
+      currency,
+      category,
+      description,
+    })
+    .returning()
+    .run();
+  return inserted;
+}
+
+export async function getPersonalRecords(userId, { limit = 500 } = {}) {
+  return await db
+    .select()
+    .from(personalRecords)
+    .where(eq(personalRecords.userId, userId))
+    .orderBy(desc(personalRecords.createdAt))
+    .limit(limit)
+    .all();
+}
+
+export async function deletePersonalRecord(userId, recordId) {
+  await db
+    .delete(personalRecords)
+    .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
+    .run();
+}
+
+export async function clearPersonalRecords(userId) {
+  await db.delete(personalRecords).where(eq(personalRecords.userId, userId)).run();
+}
+
+export async function addPersonalDebt({ userId, direction, personName, amount, currency = 'UZS', note = '' }) {
+  const [inserted] = await db
+    .insert(personalDebts)
+    .values({
+      userId,
+      direction,
+      personName,
+      amount,
+      currency,
+      note,
+      isPaid: 0,
+    })
+    .returning()
+    .run();
+  return inserted;
+}
+
+export async function getPersonalDebts(userId) {
+  return await db
+    .select()
+    .from(personalDebts)
+    .where(and(eq(personalDebts.userId, userId), eq(personalDebts.isPaid, 0)))
+    .orderBy(desc(personalDebts.createdAt))
+    .all();
+}
+
+export async function markPersonalDebtPaid(userId, debtId) {
+  await db
+    .update(personalDebts)
+    .set({ isPaid: 1 })
+    .where(and(eq(personalDebts.id, debtId), eq(personalDebts.userId, userId)))
+    .run();
+}
+
+export async function getUserApartmentBalance(userId, username) {
+  const allGroups = await getAllGroups();
+  if (!allGroups || allGroups.length === 0) return null;
+
+  const grp = allGroups.find((g) => g.id === -1003778975985) || allGroups[0];
+  const mems = await getMembers(grp.id);
+  const normUser = normalizeName(username);
+
+  const matched = mems.filter(
+    (m) => Number(m.telegramId) === Number(userId) || (normUser && normalizeName(m.name) === normUser)
+  );
+  if (matched.length === 0) return null;
+
+  const unsettled = await getExpenses(grp.id, { limit: 10000, includeSettled: false });
+  if (!unsettled || unsettled.length === 0) {
+    return { groupName: grp.groupName || 'Guruh', balance: 0, currency: 'UZS' };
+  }
+
+  const balancesByCur = calculateBalances(mems, unsettled, grp);
+  const uzsBalances = balancesByCur.UZS || {};
+
+  let totalBal = 0;
+  let foundAny = false;
+  for (const m of matched) {
+    const val = uzsBalances[Number(m.telegramId)];
+    if (val !== undefined) {
+      totalBal += val;
+      foundAny = true;
+    }
+  }
+
+  return foundAny ? { groupName: grp.groupName || 'Guruh', balance: totalBal, currency: 'UZS' } : null;
+}
+
+export async function checkPersonalReminders(api) {
+  if (!api) return 0;
+  const sessions = await db.select().from(adminSessions).all();
+  if (!sessions || sessions.length === 0) return 0;
+
+  const { dateStr, timeStr, nowUzt } = getUztTimeInfo();
+  const dateLabel = formatUzDate(nowUzt);
+  let sentCount = 0;
+
+  for (const s of sessions) {
+    try {
+      const ps = getPersonalSettings(s);
+      if (!ps.reminderEnabled || !ps.dailyTasks || ps.dailyTasks.length === 0) continue;
+      if (ps.lastReminderDate === dateStr) continue;
+      if (timeStr < (ps.reminderTime || '09:00')) continue;
+
+      const payload = buildPersonalReminderPayload(ps.dailyTasks, ps.completedTaskIndices, dateLabel);
+      await api.sendMessage({
+        chat_id: s.userId,
+        text: payload.text,
+        reply_markup: payload.reply_markup,
+      });
+      await updatePersonalSettings(s.userId, { lastReminderDate: dateStr });
+      sentCount++;
+    } catch (err) {
+      console.warn(`Could not send personal reminder to ${s.userId}:`, err?.message || err);
+    }
+  }
+  return sentCount;
 }

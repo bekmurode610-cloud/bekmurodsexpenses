@@ -17,6 +17,8 @@ import {
   sendAutoDeleteMessage,
   cleanupPendingDeletions,
   queueMessageDeletion,
+  getAdminSession,
+  setAdminSession,
 } from '../lib/db-service.js';
 import {
   calculateBalances,
@@ -34,6 +36,7 @@ import {
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
 import { formatMoney, parseExpenseInput } from '../lib/format.js';
 import { handleAdminPrivateMessage } from '../lib/admin-panel.js';
+import { handleIndividualMessage, renderModeSelector } from '../lib/individual-panel.js';
 
 function buildMemberNameMap(groupMembers, expensesList = []) {
   const map = new Map();
@@ -96,9 +99,37 @@ export default async function (message, ctx) {
     return;
   }
 
-  // 1. Private chat handling — Bot Admin Control Center
+  // 1. Private chat handling — Dual Mode (Individual + Group Control Center)
   if (isPrivate) {
-    await handleAdminPrivateMessage(api, message);
+    const lower = text.toLowerCase();
+    if (lower.startsWith('/start') || lower.startsWith('/mode')) {
+      await setAdminSession(userId, { awaitingInput: null });
+      await renderModeSelector(api, chatId, null);
+      return;
+    }
+    if (lower.startsWith('/admin')) {
+      await setAdminSession(userId, { mode: 'group', awaitingInput: null });
+      await handleAdminPrivateMessage(api, message);
+      return;
+    }
+
+    const session = await getAdminSession(userId);
+    if (session?.awaitingInput?.startsWith('ind_') || session?.mode === 'individual') {
+      await handleIndividualMessage(api, message);
+      return;
+    }
+    if (session?.mode === 'group') {
+      await handleAdminPrivateMessage(api, message);
+      return;
+    }
+
+    // In 'choose' mode, auto-detect direct expense/income entries or show mode selector
+    const cleaned = text.replace(/^[+*]+/, '').trim();
+    if (parseExpenseInput(cleaned)) {
+      await handleIndividualMessage(api, message);
+    } else {
+      await renderModeSelector(api, chatId, null);
+    }
     return;
   }
 

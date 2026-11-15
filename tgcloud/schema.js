@@ -61,6 +61,35 @@ export const pendingDeletions = table('pending_deletions', {
 export const adminSessions = table('admin_sessions', {
   userId: integer('user_id').primaryKey(),
   groupId: integer('group_id'),
+  mode: text('mode').default('choose'),
   awaitingInput: text('awaiting_input'),
+  personalSettings: json('personal_settings'),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
 });
+
+export const personalRecords = table('personal_records', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),
+  type: text('type').notNull(), // 'expense' | 'income'
+  amount: real('amount').notNull(),
+  currency: text('currency').notNull(),
+  category: text('category').notNull(),
+  description: text('description').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+}, (t) => ({
+  personalUserIdx: index('idx_personal_records_user').on(t.userId),
+}));
+
+export const personalDebts = table('personal_debts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),
+  direction: text('direction').notNull(), // 'owe_me' | 'i_owe'
+  personName: text('person_name').notNull(),
+  amount: real('amount').notNull(),
+  currency: text('currency').notNull(),
+  note: text('note'),
+  isPaid: integer('is_paid').default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+}, (t) => ({
+  personalDebtUserIdx: index('idx_personal_debts_user').on(t.userId),
+}));

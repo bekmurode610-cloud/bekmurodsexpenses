@@ -22,8 +22,9 @@ export const ADMIN_COMMANDS = [
 ];
 
 export const PRIVATE_COMMANDS = [
-  { command: 'start', description: "⚙️ Boshqaruv paneli (Admin Panel)" },
-  { command: 'admin', description: "⚙️ Boshqaruv panelini ochish" },
+  { command: 'start', description: "Shaxsiy / Guruh bo'limini tanlash" },
+  { command: 'mode', description: "Shaxsiy va Guruh orasida almashtirish" },
+  { command: 'admin', description: "Guruh boshqaruv paneli" },
   { command: 'help', description: "Qo'llanma" },
 ];
 

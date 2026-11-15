@@ -1,5 +1,12 @@
 import { api } from 'sdk';
-import { getAllGroups, getMembers, checkAndAnnounceDuty, cleanupPendingDeletions, cleanupTrialGroup } from '../lib/db-service.js';
+import {
+  getAllGroups,
+  getMembers,
+  checkAndAnnounceDuty,
+  cleanupPendingDeletions,
+  cleanupTrialGroup,
+  checkPersonalReminders,
+} from '../lib/db-service.js';
 
 export default async function (input, ctx) {
   if (input?.cleanupTrial) {
@@ -21,5 +28,6 @@ export default async function (input, ctx) {
       console.warn(`Could not check duty for group ${grp?.id}:`, err?.message || err);
     }
   }
-  return { ok: true, deleted, announcedCount: announced.length, announced };
+  const personalReminded = await checkPersonalReminders(api);
+  return { ok: true, deleted, announcedCount: announced.length, announced, personalReminded };
 }
