@@ -63,6 +63,17 @@ export function formatYmdShortUz(ymd) {
   return `${day}-${MONTHS_UZ[month - 1] || month}`;
 }
 
+export function formatUztDateTime(tsVal) {
+  const ms = toMs(tsVal);
+  if (!ms) return '';
+  const d = new Date(ms + UZT_OFFSET_MS);
+  const day = d.getUTCDate();
+  const month = (MONTHS_UZ[d.getUTCMonth()] || '').slice(0, 3);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${day}-${month} ${hh}:${mm}`;
+}
+
 export function formatWeekRangeLabel(weekStart, weekEnd) {
   return `${formatYmdShortUz(weekStart)} – ${formatYmdShortUz(weekEnd)}`;
 }
@@ -543,12 +554,8 @@ export function computeWeeklyReportSnapshot(
     }
 
     const curTransfers = calculateSettlementTransfers(balancesByName);
-    if (curTransfers.length > 0) {
-      resp += `\nTo'lovlar (${cur}):\n`;
-      for (const tr of curTransfers) {
-        resp += `• ${tr.from} → ${tr.to}: ${formatMoney(tr.amount, cur)}\n`;
-        transfers.push({ currency: cur, ...tr });
-      }
+    for (const tr of curTransfers) {
+      transfers.push({ currency: cur, ...tr });
     }
 
     if (!isSettled && settings.showPaymentInfo && settings.paymentInfo) {
@@ -658,7 +665,92 @@ export function formatWeeklyHistoryText(reports = []) {
   return text.trim();
 }
 
-export function buildWeekReportKeyboard(allExpenses = [], savedReports = [], activeWeekStart) {
+function resolveWeekItems(groupMembers, allExpenses = [], weekStart = null) {
+  const buckets = groupExpensesByWeek(allExpenses || []);
+  const target = weekStart
+    ? buckets.find((b) => b.weekStart === weekStart) || getWeekRangeFromStart(weekStart)
+    : pickActiveTargetWeek(allExpenses || []);
+
+  const rawList = target.expenses || [];
+  const unsettled = rawList.filter((e) => e.settled === 0);
+  const items = (unsettled.length > 0 ? unsettled : rawList)
+    .slice()
+    .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt) || (b.id || 0) - (a.id || 0));
+
+  const memberMap = buildMemberNameMap(groupMembers, allExpenses || []);
+  const label = target.label || formatWeekRangeLabel(target.weekStart, target.weekEnd);
+  return { weekStart: target.weekStart, weekEnd: target.weekEnd, label, items, memberMap };
+}
+
+export function buildExpensesByMemberText(groupMembers, allExpenses = [], weekStart = null) {
+  const { label, items, memberMap } = resolveWeekItems(groupMembers, allExpenses, weekStart);
+  if (items.length === 0) {
+    return `Kishilar bo'yicha · ${label}\n\nXarajatlar yo'q.`;
+  }
+
+  const byMember = new Map();
+  for (const exp of items) {
+    const name = memberMap.get(Number(exp.payerId)) || exp.payerName || 'Unknown';
+    if (!byMember.has(name)) {
+      byMember.set(name, { name, totals: {}, rows: [] });
+    }
+    const entry = byMember.get(name);
+    const cur = (exp.currency || 'UZS').toUpperCase();
+    entry.totals[cur] = Math.round(((entry.totals[cur] || 0) + exp.amount) * 10) / 10;
+    entry.rows.push(exp);
+  }
+
+  const sortedMembers = Array.from(byMember.values()).sort(
+    (a, b) => (b.totals.UZS || Object.values(b.totals)[0] || 0) - (a.totals.UZS || Object.values(a.totals)[0] || 0)
+  );
+
+  let text = `Kishilar bo'yicha · ${label} (${items.length} ta)\n\n`;
+  for (const m of sortedMembers) {
+    const totalStr = Object.entries(m.totals)
+      .map(([c, v]) => formatMoney(v, c))
+      .join(' · ');
+    text += `${m.name} · ${totalStr} (${m.rows.length} ta):\n`;
+    for (const exp of m.rows) {
+      const dt = formatUztDateTime(exp.createdAt);
+      const line = `• [${dt}] ${formatMoney(exp.amount, exp.currency)} · ${exp.description}\n`;
+      if (text.length + line.length > 3850) {
+        text += '... qolgan yozuvlar sig\'madi\n';
+        return text.trim();
+      }
+      text += line;
+    }
+    text += '\n';
+  }
+  return text.trim();
+}
+
+export function buildExpensesByTimeText(groupMembers, allExpenses = [], weekStart = null) {
+  const { label, items, memberMap } = resolveWeekItems(groupMembers, allExpenses, weekStart);
+  if (items.length === 0) {
+    return `Vaqt bo'yicha · ${label}\n\nXarajatlar yo'q.`;
+  }
+
+  let text = `Vaqt bo'yicha · ${label} (${items.length} ta)\n\n`;
+  for (let i = 0; i < items.length; i++) {
+    const exp = items[i];
+    const name = memberMap.get(Number(exp.payerId)) || exp.payerName || 'Unknown';
+    const dt = formatUztDateTime(exp.createdAt);
+    const line = `${i + 1}. [${dt}] ${name} · ${formatMoney(exp.amount, exp.currency)} · ${exp.description} (ID: ${exp.id})\n`;
+    if (text.length + line.length > 3850) {
+      text += `... yana ${items.length - i} ta xarajat bor`;
+      break;
+    }
+    text += line;
+  }
+  return text.trim();
+}
+
+export function buildWeekReportKeyboard(
+  allExpenses = [],
+  savedReports = [],
+  activeWeekStart,
+  viewMode = 'summary'
+) {
   const weekStarts = new Set();
   for (const r of savedReports || []) {
     if (r?.weekStart) weekStarts.add(r.weekStart);
@@ -669,20 +761,41 @@ export function buildWeekReportKeyboard(allExpenses = [], savedReports = [], act
   if (activeWeekStart) weekStarts.add(activeWeekStart);
 
   const sorted = Array.from(weekStarts).sort((a, b) => b.localeCompare(a)).slice(0, 4);
-  if (sorted.length <= 1 && (!savedReports || savedReports.length === 0)) {
-    return undefined;
-  }
+  const viewPrefix = viewMode === 'mem' ? 'wk:mem:' : viewMode === 'time' ? 'wk:time:' : 'wk:show:';
 
-  const rows = [];
-  for (let i = 0; i < Math.min(2, sorted.length); i += 2) {
-    const pair = sorted.slice(i, i + 2).map((ws) => {
+  const rows = [
+    [
+      {
+        text: `${viewMode === 'mem' ? '• ' : ''}Kishilar bo'yicha`,
+        callback_data: `wk:mem:${activeWeekStart}`,
+      },
+      {
+        text: `${viewMode === 'time' ? '• ' : ''}Vaqt bo'yicha`,
+        callback_data: `wk:time:${activeWeekStart}`,
+      },
+    ],
+  ];
+
+  if (sorted.length > 1) {
+    const pair = sorted.slice(0, 2).map((ws) => {
       const r = getWeekRangeFromStart(ws);
       const prefix = ws === activeWeekStart ? '• ' : '';
-      return { text: `${prefix}${r.label}`, callback_data: `wk:show:${ws}` };
+      return { text: `${prefix}${r.label}`, callback_data: `${viewPrefix}${ws}` };
     });
     rows.push(pair);
   }
-  rows.push([{ text: 'Haftalar tarixi', callback_data: 'wk:list' }]);
+
+  const bottomRow = [];
+  if (viewMode !== 'summary') {
+    bottomRow.push({ text: '← Hisobotga', callback_data: `wk:show:${activeWeekStart}` });
+  }
+  if (sorted.length > 1 || (savedReports && savedReports.length > 0)) {
+    bottomRow.push({ text: 'Haftalar tarixi', callback_data: 'wk:list' });
+  }
+  if (bottomRow.length > 0) {
+    rows.push(bottomRow);
+  }
+
   return { inline_keyboard: rows };
 }
 

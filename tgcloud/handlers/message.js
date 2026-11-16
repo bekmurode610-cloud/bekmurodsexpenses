@@ -33,9 +33,10 @@ import {
   getUztTimeInfo,
   getGroupSettings,
   buildDetailReportText,
+  buildExpensesByMemberText,
+  buildExpensesByTimeText,
   pickActiveTargetWeek,
   getWeekRangeUzt,
-  formatYmdShortUz,
   formatWeeklyHistoryText,
   buildWeekReportKeyboard,
   buildWeeklyHistoryKeyboard,
@@ -510,10 +511,8 @@ export default async function (message, ctx) {
     }
 
     case '/expenses': {
-      const recent = await getExpenses(chatId, { limit: 30, includeSettled: false });
-      const listToShow = recent.length > 0 ? recent : await getExpenses(chatId, { limit: 20, includeSettled: true });
-
-      if (!listToShow || listToShow.length === 0) {
+      const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
+      if (!allExpenses || allExpenses.length === 0) {
         await sendReply({
           chat_id: chatId,
           text: "Hozircha xarajatlar yo'q.",
@@ -522,25 +521,14 @@ export default async function (message, ctx) {
       }
 
       const allMembers = await getMembers(chatId);
-      const memberMap = buildMemberNameMap(allMembers, listToShow);
-
-      let resp = recent.length > 0 ? 'Yaqindagi xarajatlar:\n\n' : 'Nollangan xarajatlar:\n\n';
-      let lastWeekLabel = '';
-      listToShow.forEach((exp, idx) => {
-        const wr = getWeekRangeUzt(exp.createdAt);
-        if (wr.label !== lastWeekLabel) {
-          resp += `${idx > 0 ? '\n' : ''}📅 ${wr.label}\n`;
-          lastWeekLabel = wr.label;
-        }
-        const name = memberMap.get(Number(exp.payerId)) || exp.payerName;
-        const dateTag = formatYmdShortUz(wr.dateStr);
-        resp += `${idx + 1}. [${dateTag}] ${name}: ${formatMoney(exp.amount, exp.currency)} - ${exp.description} (ID: ${exp.id})\n`;
-      });
-      resp += "\nO'chirish: /delete <ID>";
+      const savedReports = await syncGroupWeeklyReports(chatId);
+      const targetWeekStart = pickActiveTargetWeek(allExpenses).weekStart;
+      const respText = `${buildExpensesByTimeText(allMembers, allExpenses, targetWeekStart)}\n\nO'chirish: /delete <ID>`;
 
       await sendReply({
         chat_id: chatId,
-        text: resp.trim(),
+        text: respText,
+        reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'time'),
       });
       break;
     }

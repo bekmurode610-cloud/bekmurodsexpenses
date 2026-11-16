@@ -22,6 +22,8 @@ import {
   getUztTimeInfo,
   getGroupSettings,
   buildDetailReportText,
+  buildExpensesByMemberText,
+  buildExpensesByTimeText,
   formatWeeklyHistoryText,
   buildWeekReportKeyboard,
   buildWeeklyHistoryKeyboard,
@@ -311,7 +313,10 @@ export default async function (callbackQuery, ctx) {
     return;
   }
 
-  if (data === 'wk:list' || (data && data.startsWith('wk:show:'))) {
+  if (
+    data === 'wk:list' ||
+    (data && (data.startsWith('wk:show:') || data.startsWith('wk:mem:') || data.startsWith('wk:time:')))
+  ) {
     const savedReports = await syncGroupWeeklyReports(chatId);
     let nextText;
     let nextMarkup;
@@ -320,15 +325,26 @@ export default async function (callbackQuery, ctx) {
       nextText = formatWeeklyHistoryText(savedReports);
       nextMarkup = buildWeeklyHistoryKeyboard(savedReports);
     } else {
-      const targetWeekStart = data.replace('wk:show:', '').trim();
       const mems = await getMembers(chatId);
       const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
       const grp = await getGroup(chatId);
-      nextText = buildDetailReportText(mems, allExpenses, grp, {
-        weekStart: targetWeekStart,
-        savedReports,
-      });
-      nextMarkup = buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart);
+
+      if (data.startsWith('wk:mem:')) {
+        const targetWeekStart = data.replace('wk:mem:', '').trim();
+        nextText = buildExpensesByMemberText(mems, allExpenses, targetWeekStart);
+        nextMarkup = buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'mem');
+      } else if (data.startsWith('wk:time:')) {
+        const targetWeekStart = data.replace('wk:time:', '').trim();
+        nextText = buildExpensesByTimeText(mems, allExpenses, targetWeekStart);
+        nextMarkup = buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'time');
+      } else {
+        const targetWeekStart = data.replace('wk:show:', '').trim();
+        nextText = buildDetailReportText(mems, allExpenses, grp, {
+          weekStart: targetWeekStart,
+          savedReports,
+        });
+        nextMarkup = buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'summary');
+      }
     }
 
     try {

@@ -30,6 +30,9 @@ import {
   formatUzDate,
   normalizeName,
   buildDetailReportText,
+  buildExpensesByMemberText,
+  buildExpensesByTimeText,
+  buildWeekReportKeyboard,
   pickActiveTargetWeek,
   formatWeeklyHistoryText,
   formatWeekRangeLabel,
@@ -402,6 +405,10 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '', 
 
   const rows = [
     [
+      { text: "Kishilar bo'yicha", callback_data: `adm:e_mem:${targetWeekStart}` },
+      { text: "Vaqt bo'yicha", callback_data: `adm:e_time:${targetWeekStart}` },
+    ],
+    [
       { text: "Ro'yxat / O'chirish", callback_data: 'adm:e_list' },
       { text: 'Haftalar tarixi', callback_data: 'adm:e_weeks' },
     ],
@@ -412,6 +419,35 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '', 
     [
       { text: 'Tozalash (Reset)', callback_data: 'adm:e_reset' },
       { text: '← Orqaga', callback_data: 'adm:home' },
+    ],
+  ];
+
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+}
+
+async function renderAdminExpensesBreakdown(api, chatId, messageId, ctxData, mode, weekStart) {
+  const { grp, mems } = ctxData;
+  const allExpenses = await getExpenses(grp.id, { limit: 10000, includeSettled: true });
+  const targetWeekStart = weekStart || pickActiveTargetWeek(allExpenses).weekStart;
+  const text =
+    mode === 'mem'
+      ? buildExpensesByMemberText(mems, allExpenses, targetWeekStart)
+      : buildExpensesByTimeText(mems, allExpenses, targetWeekStart);
+
+  const rows = [
+    [
+      {
+        text: `${mode === 'mem' ? '• ' : ''}Kishilar bo'yicha`,
+        callback_data: `adm:e_mem:${targetWeekStart}`,
+      },
+      {
+        text: `${mode === 'time' ? '• ' : ''}Vaqt bo'yicha`,
+        callback_data: `adm:e_time:${targetWeekStart}`,
+      },
+    ],
+    [
+      { text: 'Guruhga yuborish', callback_data: `adm:e_bpost:${mode}:${targetWeekStart}` },
+      { text: '← Orqaga', callback_data: `adm:e_week:${targetWeekStart}` },
     ],
   ];
 
@@ -1074,6 +1110,37 @@ export async function handleAdminCallback(api, callbackQuery) {
     return;
   }
 
+  if (action === 'e_mem' || action === 'e_time') {
+    await renderAdminExpensesBreakdown(
+      api,
+      chatId,
+      messageId,
+      ctxData,
+      action === 'e_mem' ? 'mem' : 'time',
+      arg || null
+    );
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'e_bpost') {
+    const [bMode, bWeek] = arg.split(':');
+    const allExpenses = await getExpenses(grp.id, { limit: 10000, includeSettled: true });
+    const savedReports = await syncGroupWeeklyReports(grp.id);
+    const targetWeekStart = bWeek || pickActiveTargetWeek(allExpenses).weekStart;
+    const msgText =
+      bMode === 'mem'
+        ? buildExpensesByMemberText(mems, allExpenses, targetWeekStart)
+        : buildExpensesByTimeText(mems, allExpenses, targetWeekStart);
+    await api.sendMessage({
+      chat_id: grp.id,
+      text: msgText,
+      reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, bMode === 'mem' ? 'mem' : 'time'),
+    });
+    await api.answerCallbackQuery({ callback_query_id: cbId, text: '📢 Guruhga yuborildi!' });
+    return;
+  }
+
   if (action === 'e_list') {
     await renderExpenseList(api, chatId, messageId, ctxData);
     await api.answerCallbackQuery({ callback_query_id: cbId });
@@ -1099,7 +1166,11 @@ export async function handleAdminCallback(api, callbackQuery) {
       weekStart: targetWeekStart,
       savedReports,
     });
-    await api.sendMessage({ chat_id: grp.id, text: report });
+    await api.sendMessage({
+      chat_id: grp.id,
+      text: report,
+      reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'summary'),
+    });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: '📢 Hisobot guruhga yuborildi!' });
     return;
   }
