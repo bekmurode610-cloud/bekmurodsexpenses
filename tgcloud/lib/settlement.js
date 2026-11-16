@@ -40,6 +40,13 @@ const MONTHS_UZ = [
   'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr',
 ];
 
+export function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function toMs(val) {
   if (!val) return 0;
   if (val instanceof Date) return val.getTime();
@@ -472,10 +479,10 @@ export function computeWeeklyReportSnapshot(
   const transfers = [];
   let participantCount = 0;
 
-  let resp = `Hisobot · ${label}${isSettled ? ' (Yopilgan)' : ''}\n\n`;
+  let resp = `<b>Hisobot</b> · ${escapeHtml(label)}${isSettled ? ' <i>(Yopilgan)</i>' : ''}\n\n`;
 
   if (activeList.length === 0) {
-    resp += `${label} haftasi uchun xarajatlar yo'q.`;
+    resp += `${escapeHtml(label)} haftasi uchun xarajatlar yo'q.`;
     return {
       weekStart,
       weekEnd,
@@ -510,18 +517,18 @@ export function computeWeeklyReportSnapshot(
       spending[pid] = (spending[pid] || 0) + e.amount;
     }
 
-    resp += `Jami xarajat: ${formatMoney(totalSpent, cur)} (${curExpenses.length} ta)\n`;
+    resp += `Jami xarajat: <b>${formatMoney(totalSpent, cur)}</b> <i>(${curExpenses.length} ta)</i>\n`;
 
     const prevTotals = previousReport?.totalByCurrency || {};
     const prevSpent = prevTotals[cur];
     const deltaText = formatWeeklyDelta(totalSpent, prevSpent, cur);
     if (deltaText) {
-      resp += `O'tgan haftaga nisbatan: ${deltaText}\n`;
+      resp += `O'tgan haftaga nisbatan: <b>${escapeHtml(deltaText)}</b>\n`;
     }
 
-    resp += `Har bir kishiga: ${formatMoney(fairShare, cur)}\n\n`;
+    resp += `Har bir kishiga: <b>${formatMoney(fairShare, cur)}</b>\n\n`;
 
-    resp += "Kim qancha to'ladi:\n";
+    const paidLines = [];
     const spendingByName = new Map();
     for (const [mid, amt] of Object.entries(spending)) {
       const name = memberMap.get(Number(mid)) || 'Unknown';
@@ -529,14 +536,15 @@ export function computeWeeklyReportSnapshot(
     }
     const sortedSpending = Array.from(spendingByName.entries()).sort((a, b) => b[1] - a[1]);
     for (const [name, amt] of sortedSpending) {
-      resp += `${name}: ${formatMoney(amt, cur)}\n`;
+      paidLines.push(`${escapeHtml(name)} — <b>${formatMoney(amt, cur)}</b>`);
       if (!breakdownByName.has(name)) {
         breakdownByName.set(name, { name, paidByCurrency: {}, balanceByCurrency: {} });
       }
       breakdownByName.get(name).paidByCurrency[cur] = Math.round(amt * 10) / 10;
     }
+    resp += `<b>Kim qancha to'ladi</b>\n<blockquote>${paidLines.join('\n')}</blockquote>\n\n`;
 
-    resp += '\nBalans:\n';
+    const balLines = [];
     const balancesByName = new Map();
     for (const [mid, bal] of Object.entries(balances)) {
       const name = memberMap.get(Number(mid)) || 'Unknown';
@@ -546,12 +554,17 @@ export function computeWeeklyReportSnapshot(
     for (const [name, bal] of sortedBal) {
       const roundedBal = Math.round(bal * 10) / 10;
       const sign = roundedBal > 0 ? '+' : '';
-      resp += Math.abs(roundedBal) > 0.05 ? `${name}: ${sign}${formatMoney(roundedBal, cur)}\n` : `${name}: 0\n`;
+      balLines.push(
+        Math.abs(roundedBal) > 0.05
+          ? `${escapeHtml(name)} — <b>${sign}${formatMoney(roundedBal, cur)}</b>`
+          : `${escapeHtml(name)} — <b>0</b>`
+      );
       if (!breakdownByName.has(name)) {
         breakdownByName.set(name, { name, paidByCurrency: {}, balanceByCurrency: {} });
       }
       breakdownByName.get(name).balanceByCurrency[cur] = roundedBal;
     }
+    resp += `<b>Balans</b>\n<blockquote>${balLines.join('\n')}</blockquote>\n`;
 
     const curTransfers = calculateSettlementTransfers(balancesByName);
     for (const tr of curTransfers) {
@@ -559,7 +572,7 @@ export function computeWeeklyReportSnapshot(
     }
 
     if (!isSettled && settings.showPaymentInfo && settings.paymentInfo) {
-      resp += `\nTo'lov uchun (Pay to):\n${settings.paymentInfo}\n`;
+      resp += `\n<b>To'lov uchun (Pay to)</b>\n<blockquote>${escapeHtml(settings.paymentInfo)}</blockquote>\n`;
     }
     resp += '\n';
   }
@@ -622,7 +635,7 @@ export function buildDetailReportText(groupMembers, allExpenses, grp, options = 
     if (newerUnsettled.length > 0) {
       const totalNewer = newerUnsettled.reduce((s, b) => s + b.unsettledExpenses.length, 0);
       const newest = newerUnsettled[0];
-      text += `\n\nEslatma: ${newest.label} haftasida ${totalNewer} ta yangi xarajat alohida saqlanmoqda (/weeks).`;
+      text += `\n\n<i>Eslatma: ${escapeHtml(newest.label)} haftasida ${totalNewer} ta yangi xarajat alohida saqlanmoqda (/weeks).</i>`;
     }
   }
 
@@ -635,7 +648,7 @@ export function formatWeeklyHistoryText(reports = []) {
   }
 
   const ordered = [...reports].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-  let text = "Haftalik hisobotlar tarixi\n\n";
+  let text = "<b>Haftalik hisobotlar tarixi</b>\n\n";
 
   for (let i = 0; i < ordered.length; i++) {
     const rep = ordered[i];
@@ -649,17 +662,17 @@ export function formatWeeklyHistoryText(reports = []) {
         ? curs.map((c) => formatMoney(totals[c], c)).join(' · ')
         : '0 ming';
 
-    text += `${i + 1}. ${label} (${status})\n`;
-    text += `   Jami: ${summary} (${rep.expenseCount || 0} ta)`;
-
+    let deltaLine = '';
     if (prev && curs.length > 0) {
       const mainCur = curs.includes('UZS') ? 'UZS' : curs[0];
       const delta = formatWeeklyDelta(totals[mainCur], prev.totalByCurrency?.[mainCur], mainCur);
       if (delta) {
-        text += ` · ${delta}`;
+        deltaLine = `\nFarq: ${escapeHtml(delta)}`;
       }
     }
-    text += '\n\n';
+
+    text += `<b>${escapeHtml(label)}</b> <i>(${status})</i>\n`;
+    text += `<blockquote>Jami: <b>${escapeHtml(summary)}</b> <i>(${rep.expenseCount || 0} ta)</i>${deltaLine}</blockquote>\n\n`;
   }
 
   return text.trim();
@@ -685,7 +698,7 @@ function resolveWeekItems(groupMembers, allExpenses = [], weekStart = null) {
 export function buildExpensesByMemberText(groupMembers, allExpenses = [], weekStart = null) {
   const { label, items, memberMap } = resolveWeekItems(groupMembers, allExpenses, weekStart);
   if (items.length === 0) {
-    return `Kishilar bo'yicha · ${label}\n\nXarajatlar yo'q.`;
+    return `<b>Kishilar bo'yicha</b> · ${escapeHtml(label)}\n\nXarajatlar yo'q.`;
   }
 
   const byMember = new Map();
@@ -704,22 +717,33 @@ export function buildExpensesByMemberText(groupMembers, allExpenses = [], weekSt
     (a, b) => (b.totals.UZS || Object.values(b.totals)[0] || 0) - (a.totals.UZS || Object.values(a.totals)[0] || 0)
   );
 
-  let text = `Kishilar bo'yicha · ${label} (${items.length} ta)\n\n`;
+  let text = `<b>Kishilar bo'yicha</b> · ${escapeHtml(label)} <i>(${items.length} ta)</i>\n\n`;
+  let renderedCount = 0;
+
   for (const m of sortedMembers) {
     const totalStr = Object.entries(m.totals)
       .map(([c, v]) => formatMoney(v, c))
       .join(' · ');
-    text += `${m.name} · ${totalStr} (${m.rows.length} ta):\n`;
+    const header = `${escapeHtml(m.name)}  ·  <b>${escapeHtml(totalStr)}</b> <i>(${m.rows.length} ta)</i>\n`;
+    const lines = [];
+
     for (const exp of m.rows) {
       const dt = formatUztDateTime(exp.createdAt);
-      const line = `• [${dt}] ${formatMoney(exp.amount, exp.currency)} · ${exp.description}\n`;
-      if (text.length + line.length > 3850) {
-        text += '... qolgan yozuvlar sig\'madi\n';
+      const line = `<b>${formatMoney(exp.amount, exp.currency)}</b> — ${escapeHtml(exp.description)}  <i>(${escapeHtml(dt)})</i>`;
+      const tentative = `${text}${header}<blockquote>${[...lines, line].join('\n')}</blockquote>\n\n`;
+      if (tentative.length > 3850) {
+        if (lines.length > 0) {
+          text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+        }
+        const rem = items.length - renderedCount;
+        text += `<i>... yana ${rem} ta xarajat sig'madi</i>`;
         return text.trim();
       }
-      text += line;
+      lines.push(line);
+      renderedCount++;
     }
-    text += '\n';
+
+    text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
   }
   return text.trim();
 }
@@ -727,20 +751,47 @@ export function buildExpensesByMemberText(groupMembers, allExpenses = [], weekSt
 export function buildExpensesByTimeText(groupMembers, allExpenses = [], weekStart = null) {
   const { label, items, memberMap } = resolveWeekItems(groupMembers, allExpenses, weekStart);
   if (items.length === 0) {
-    return `Vaqt bo'yicha · ${label}\n\nXarajatlar yo'q.`;
+    return `<b>Vaqt bo'yicha</b> · ${escapeHtml(label)}\n\nXarajatlar yo'q.`;
   }
 
-  let text = `Vaqt bo'yicha · ${label} (${items.length} ta)\n\n`;
-  for (let i = 0; i < items.length; i++) {
-    const exp = items[i];
-    const name = memberMap.get(Number(exp.payerId)) || exp.payerName || 'Unknown';
-    const dt = formatUztDateTime(exp.createdAt);
-    const line = `${i + 1}. [${dt}] ${name} · ${formatMoney(exp.amount, exp.currency)} · ${exp.description} (ID: ${exp.id})\n`;
-    if (text.length + line.length > 3850) {
-      text += `... yana ${items.length - i} ta xarajat bor`;
-      break;
+  const daysMap = new Map();
+  for (const exp of items) {
+    const wr = getWeekRangeUzt(exp.createdAt);
+    const dayKey = wr.dateStr;
+    if (!daysMap.has(dayKey)) {
+      daysMap.set(dayKey, { dayLabel: formatYmdShortUz(dayKey), rows: [] });
     }
-    text += line;
+    daysMap.get(dayKey).rows.push(exp);
+  }
+
+  let text = `<b>Vaqt bo'yicha</b> · ${escapeHtml(label)} <i>(${items.length} ta)</i>\n\n`;
+  let renderedCount = 0;
+
+  for (const dayGroup of daysMap.values()) {
+    const header = `<b>${escapeHtml(dayGroup.dayLabel)}</b>\n`;
+    const lines = [];
+
+    for (const exp of dayGroup.rows) {
+      const name = memberMap.get(Number(exp.payerId)) || exp.payerName || 'Unknown';
+      const ms = toMs(exp.createdAt);
+      const uzt = new Date(ms + UZT_OFFSET_MS);
+      const hhmm = `${String(uzt.getUTCHours()).padStart(2, '0')}:${String(uzt.getUTCMinutes()).padStart(2, '0')}`;
+      const line = `<code>${hhmm}</code> · ${escapeHtml(name)} · <b>${formatMoney(exp.amount, exp.currency)}</b> — ${escapeHtml(exp.description)} <i>(#${exp.id})</i>`;
+
+      const tentative = `${text}${header}<blockquote>${[...lines, line].join('\n')}</blockquote>\n\n`;
+      if (tentative.length > 3850) {
+        if (lines.length > 0) {
+          text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+        }
+        const rem = items.length - renderedCount;
+        text += `<i>... yana ${rem} ta xarajat sig'madi</i>`;
+        return text.trim();
+      }
+      lines.push(line);
+      renderedCount++;
+    }
+
+    text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
   }
   return text.trim();
 }

@@ -22,6 +22,7 @@ import {
 } from './db-service.js';
 import {
   DEFAULT_DUTY_TASKS,
+  escapeHtml,
   getGroupSettings,
   getDutyRosterList,
   getExpenseRosterList,
@@ -83,8 +84,9 @@ function chunkButtons(items, perRow = 2) {
   return rows;
 }
 
-async function editOrSend(api, chatId, messageId, text, replyMarkup) {
+async function editOrSend(api, chatId, messageId, text, replyMarkup, parseMode = null) {
   const payload = { chat_id: chatId, text, reply_markup: replyMarkup };
+  if (parseMode) payload.parse_mode = parseMode;
   if (messageId) {
     try {
       await api.editMessageText({ ...payload, message_id: messageId });
@@ -397,11 +399,8 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '', 
     savedReports,
   });
 
-  let text = notice ? `${notice}\n\n` : '';
+  let text = notice ? `<b>${escapeHtml(notice)}</b>\n\n` : '';
   text += `${report}`;
-  if (text.length > 3900) {
-    text = `${text.slice(0, 3880)}\n...`;
-  }
 
   const rows = [
     [
@@ -422,7 +421,7 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '', 
     ],
   ];
 
-  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows }, 'HTML');
 }
 
 async function renderAdminExpensesBreakdown(api, chatId, messageId, ctxData, mode, weekStart) {
@@ -451,7 +450,7 @@ async function renderAdminExpensesBreakdown(api, chatId, messageId, ctxData, mod
     ],
   ];
 
-  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows }, 'HTML');
 }
 
 async function renderAdminWeeklyHistory(api, chatId, messageId, ctxData) {
@@ -472,7 +471,7 @@ async function renderAdminWeeklyHistory(api, chatId, messageId, ctxData) {
     [{ text: '← Orqaga', callback_data: 'adm:exps' }],
   ];
 
-  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows }, 'HTML');
 }
 
 async function renderExpenseList(api, chatId, messageId, ctxData, notice = '') {
@@ -1135,6 +1134,7 @@ export async function handleAdminCallback(api, callbackQuery) {
     await api.sendMessage({
       chat_id: grp.id,
       text: msgText,
+      parse_mode: 'HTML',
       reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, bMode === 'mem' ? 'mem' : 'time'),
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: '📢 Guruhga yuborildi!' });
@@ -1169,6 +1169,7 @@ export async function handleAdminCallback(api, callbackQuery) {
     await api.sendMessage({
       chat_id: grp.id,
       text: report,
+      parse_mode: 'HTML',
       reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'summary'),
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: '📢 Hisobot guruhga yuborildi!' });

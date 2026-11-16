@@ -495,6 +495,7 @@ export default async function (message, ctx) {
           weekStart: targetWeekStart,
           savedReports,
         }),
+        parse_mode: 'HTML',
         reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart),
       });
       break;
@@ -505,6 +506,7 @@ export default async function (message, ctx) {
       await sendReply({
         chat_id: chatId,
         text: formatWeeklyHistoryText(savedReports),
+        parse_mode: 'HTML',
         reply_markup: buildWeeklyHistoryKeyboard(savedReports),
       });
       break;
@@ -523,11 +525,12 @@ export default async function (message, ctx) {
       const allMembers = await getMembers(chatId);
       const savedReports = await syncGroupWeeklyReports(chatId);
       const targetWeekStart = pickActiveTargetWeek(allExpenses).weekStart;
-      const respText = `${buildExpensesByTimeText(allMembers, allExpenses, targetWeekStart)}\n\nO'chirish: /delete <ID>`;
+      const respText = `${buildExpensesByTimeText(allMembers, allExpenses, targetWeekStart)}\n\n<i>O'chirish: /delete &lt;ID&gt;</i>`;
 
       await sendReply({
         chat_id: chatId,
         text: respText,
+        parse_mode: 'HTML',
         reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart, 'time'),
       });
       break;

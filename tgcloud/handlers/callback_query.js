@@ -352,6 +352,7 @@ export default async function (callbackQuery, ctx) {
         chat_id: chatId,
         message_id: messageId,
         text: nextText,
+        parse_mode: 'HTML',
         reply_markup: nextMarkup,
       });
     } catch (err) {
