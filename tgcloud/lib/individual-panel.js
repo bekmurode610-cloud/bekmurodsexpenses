@@ -16,8 +16,11 @@ import {
   cancelMessageDeletion,
 } from './db-service.js';
 import {
+  escapeHtml,
   getUztTimeInfo,
   formatUzDate,
+  formatUztDateTime,
+  formatYmdShortUz,
   getPersonalSettings,
   buildPersonalReminderPayload,
 } from './settlement.js';
@@ -95,8 +98,9 @@ function methodLabel(method) {
   return method === 'cash' ? 'Naqd' : 'Karta';
 }
 
-async function editOrSend(api, chatId, messageId, text, replyMarkup) {
+async function editOrSend(api, chatId, messageId, text, replyMarkup, parseMode = 'HTML') {
   const payload = { chat_id: chatId, text, reply_markup: replyMarkup };
+  if (parseMode) payload.parse_mode = parseMode;
   if (messageId) {
     try {
       await api.editMessageText({ ...payload, message_id: messageId });
@@ -114,7 +118,7 @@ function getBackKeyboard(target = 'ind:home') {
 }
 
 export async function renderModeSelector(api, chatId, messageId = null) {
-  const text = "Xush kelibsiz\n\nQaysi bo'limdan foydalanasiz?";
+  const text = "<b>Xush kelibsiz</b>\n\nQaysi bo'limdan foydalanasiz?";
   const replyMarkup = {
     inline_keyboard: [
       [
@@ -201,6 +205,51 @@ export function computePersonalStats(records) {
   };
 }
 
+export function formatPersonalHomeText({ stats, ps, apt, dateLabel, notice = '' }) {
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Shaxsiy kabinet</b> · ${escapeHtml(dateLabel)}\n\n`;
+  text += `<b>Hamyon</b> · <b>${formatMoney(stats.walletUzs, 'UZS')}</b>\n`;
+  text += `<blockquote>Karta — <b>${formatMoney(stats.cardBalanceUzs, 'UZS')}</b>\nNaqd — <b>${formatMoney(stats.cashBalanceUzs, 'UZS')}</b></blockquote>\n\n`;
+
+  text += `<b>Shu oy</b>\n`;
+  text += `<blockquote>Kirim — <b>+${formatMoney(stats.monthIncomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})</i>\n`;
+  text += `Chiqim — <b>-${formatMoney(stats.monthSpentUzs, 'UZS')}</b></blockquote>`;
+
+  const extraLines = [];
+  if (ps.dailyLimit > 0) {
+    const rem = ps.dailyLimit - stats.todaySpentUzs;
+    extraLines.push(
+      `Bugun — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b> / ${formatMoney(ps.dailyLimit, 'UZS')} <i>(qoldiq: ${formatMoney(rem, 'UZS')})</i>`
+    );
+  } else if (stats.todaySpentUzs > 0) {
+    extraLines.push(`Bugungi chiqim — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b>`);
+  }
+
+  if (ps.monthlyLimit > 0) {
+    const remMon = ps.monthlyLimit - stats.monthSpentUzs;
+    extraLines.push(
+      `Oylik limit — <b>${formatMoney(stats.monthSpentUzs, 'UZS')}</b> / ${formatMoney(ps.monthlyLimit, 'UZS')} <i>(qoldiq: ${formatMoney(remMon, 'UZS')})</i>`
+    );
+  }
+
+  if (apt) {
+    const sign = apt.balance > 0 ? '+' : '';
+    const wk = apt.weekLabel ? ` (${escapeHtml(apt.weekLabel)})` : '';
+    extraLines.push(`Kvartira${wk} — <b>${sign}${formatMoney(apt.balance, apt.currency)}</b>`);
+  }
+
+  if (ps.dailyTasks.length > 0) {
+    extraLines.push(`Vazifalar — <b>${ps.completedTaskIndices.length} / ${ps.dailyTasks.length}</b>`);
+  }
+
+  if (extraLines.length > 0) {
+    text += `\n\n<b>Holat</b>\n<blockquote>${extraLines.join('\n')}</blockquote>`;
+  }
+
+  text += `\n\n<i>Tez yozish: <code>40 ming tushlik</code>, <code>+ 500 ming naqd</code>, <code>+ 2 mln karta</code></i>`;
+  return text;
+}
+
 export async function renderIndividualHome(api, chatId, messageId, userId, username, notice = '') {
   const session = await getAdminSession(userId);
   const ps = getPersonalSettings(session);
@@ -209,34 +258,13 @@ export async function renderIndividualHome(api, chatId, messageId, userId, usern
   const apt = await getUserApartmentBalance(userId, username);
   const { nowUzt } = getUztTimeInfo();
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Shaxsiy kabinet · ${formatUzDate(nowUzt)}\n\n`;
-  text += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})\n`;
-  text += `Shu oy kirim: +${formatMoney(stats.monthIncomeUzs, 'UZS')} (Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})\n`;
-  text += `Shu oy chiqim: -${formatMoney(stats.monthSpentUzs, 'UZS')}\n`;
-
-  if (ps.dailyLimit > 0) {
-    const rem = ps.dailyLimit - stats.todaySpentUzs;
-    text += `Bugun: ${formatMoney(stats.todaySpentUzs, 'UZS')} / ${formatMoney(ps.dailyLimit, 'UZS')} (Qoldiq: ${formatMoney(rem, 'UZS')})\n`;
-  } else if (stats.todaySpentUzs > 0) {
-    text += `Bugungi chiqim: ${formatMoney(stats.todaySpentUzs, 'UZS')}\n`;
-  }
-
-  if (ps.monthlyLimit > 0) {
-    const remMon = ps.monthlyLimit - stats.monthSpentUzs;
-    text += `Oylik limit: ${formatMoney(stats.monthSpentUzs, 'UZS')} / ${formatMoney(ps.monthlyLimit, 'UZS')} (Qoldiq: ${formatMoney(remMon, 'UZS')})\n`;
-  }
-
-  if (apt) {
-    const sign = apt.balance > 0 ? '+' : '';
-    text += `Kvartira balansi: ${sign}${formatMoney(apt.balance, apt.currency)}\n`;
-  }
-
-  if (ps.dailyTasks.length > 0) {
-    text += `Kunlik vazifalar: ${ps.completedTaskIndices.length} / ${ps.dailyTasks.length}\n`;
-  }
-
-  text += `\nYozish: "40 ming tushlik", "+ 500 ming naqd", "+ 2 mln karta"`;
+  const text = formatPersonalHomeText({
+    stats,
+    ps,
+    apt,
+    dateLabel: formatUzDate(nowUzt),
+    notice,
+  });
 
   const rows = [
     [
@@ -263,52 +291,213 @@ export async function renderIndividualHome(api, chatId, messageId, userId, usern
   await editOrSend(api, chatId, messageId, text.trim(), { inline_keyboard: rows });
 }
 
-async function renderReport(api, chatId, messageId, userId, notice = '') {
-  const records = await getPersonalRecords(userId, { limit: 1000 });
+export function formatPersonalReportText(records, dateLabel, notice = '') {
   const stats = computePersonalStats(records);
-  const { nowUzt } = getUztTimeInfo();
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Shaxsiy hisobot</b> · ${escapeHtml(dateLabel)}\n\n`;
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Shaxsiy hisobot · ${formatUzDate(nowUzt)}\n\n`;
-  text += `Joriy hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})\n`;
-  text += `Oylik kirim: +${formatMoney(stats.monthIncomeUzs, 'UZS')} (Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})\n`;
-  text += `Oylik chiqim: -${formatMoney(stats.monthSpentUzs, 'UZS')} (Karta: -${formatMoney(stats.monthSpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.monthSpentCashUzs, 'UZS')})\n`;
-  text += `Bugungi chiqim: ${formatMoney(stats.todaySpentUzs, 'UZS')}\n`;
+  text += `<b>Joriy hamyon</b> · <b>${formatMoney(stats.walletUzs, 'UZS')}</b>\n`;
+  text += `<blockquote>Karta — <b>${formatMoney(stats.cardBalanceUzs, 'UZS')}</b>\nNaqd — <b>${formatMoney(stats.cashBalanceUzs, 'UZS')}</b></blockquote>\n\n`;
+
+  text += `<b>Shu oydagi oqim</b>\n`;
+  text += `<blockquote>Kirim — <b>+${formatMoney(stats.monthIncomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})</i>\n`;
+  text += `Chiqim — <b>-${formatMoney(stats.monthSpentUzs, 'UZS')}</b> <i>(Karta: -${formatMoney(stats.monthSpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.monthSpentCashUzs, 'UZS')})</i>\n`;
+  text += `Bugungi chiqim — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b></blockquote>`;
 
   if (stats.otherCur.size > 0) {
-    text += `\nBoshqa valyutalar:\n`;
+    const curLines = [];
     for (const [cur, val] of stats.otherCur.entries()) {
-      text += `${cur}: ${formatMoney(val, cur)}\n`;
+      curLines.push(`${escapeHtml(cur)} — <b>${formatMoney(val, cur)}</b>`);
     }
+    text += `\n\n<b>Boshqa valyutalar</b>\n<blockquote>${curLines.join('\n')}</blockquote>`;
   }
 
   if (stats.monthByCat.size > 0) {
-    text += `\nShu oydagi xarajatlar (bo'limlar):\n`;
     const sorted = Array.from(stats.monthByCat.entries()).sort((a, b) => b[1] - a[1]);
-    for (const [cat, amt] of sorted) {
+    const catLines = sorted.map(([cat, amt]) => {
       const pct = stats.monthSpentUzs > 0 ? Math.round((amt / stats.monthSpentUzs) * 100) : 0;
-      text += `${cat}: ${formatMoney(amt, 'UZS')} (${pct}%)\n`;
-    }
+      return `${escapeHtml(cat)} — <b>${formatMoney(amt, 'UZS')}</b> <i>(${pct}%)</i>`;
+    });
+    text += `\n\n<b>Bo'limlar (shu oy)</b>\n<blockquote>${catLines.join('\n')}</blockquote>`;
   } else {
-    text += `\nBu oyda hali chiqim kiritilmagan.`;
+    text += `\n\n<i>Bu oyda hali chiqim kiritilmagan.</i>`;
+  }
+
+  return text.trim();
+}
+
+export function formatPersonalByCategoryText(records = []) {
+  const { dateStr } = getUztTimeInfo();
+  const monthStr = dateStr.slice(0, 7);
+  const monthItems = records
+    .filter((r) => getUztParts(r.createdAt).monthStr === monthStr)
+    .slice()
+    .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt) || (b.id || 0) - (a.id || 0));
+
+  if (monthItems.length === 0) {
+    return `<b>Bo'limlar bo'yicha</b> · Shu oy\n\n<i>Bu oyda hali yozuvlar yo'q.</i>`;
+  }
+
+  const byCat = new Map();
+  for (const r of monthItems) {
+    const key = r.type === 'income' ? 'Kirim' : r.category || 'Boshqa';
+    if (!byCat.has(key)) {
+      byCat.set(key, { name: key, isIncome: r.type === 'income', totals: {}, rows: [] });
+    }
+    const entry = byCat.get(key);
+    const cur = (r.currency || 'UZS').toUpperCase();
+    entry.totals[cur] = Math.round(((entry.totals[cur] || 0) + r.amount) * 10) / 10;
+    entry.rows.push(r);
+  }
+
+  const sortedCats = Array.from(byCat.values()).sort((a, b) => {
+    if (a.isIncome !== b.isIncome) return a.isIncome ? 1 : -1;
+    const va = a.totals.UZS || Object.values(a.totals)[0] || 0;
+    const vb = b.totals.UZS || Object.values(b.totals)[0] || 0;
+    return vb - va;
+  });
+
+  let text = `<b>Bo'limlar bo'yicha</b> · Shu oy <i>(${monthItems.length} ta)</i>\n\n`;
+  let renderedCount = 0;
+
+  for (const g of sortedCats) {
+    const sign = g.isIncome ? '+' : '-';
+    const totalStr = Object.entries(g.totals)
+      .map(([c, v]) => `${sign}${formatMoney(v, c)}`)
+      .join(' · ');
+    const header = `<b>${escapeHtml(g.name)}</b>  ·  <b>${escapeHtml(totalStr)}</b> <i>(${g.rows.length} ta)</i>\n`;
+    const lines = [];
+
+    for (const r of g.rows) {
+      const dt = formatUztDateTime(r.createdAt);
+      const pm = methodLabel(r.paymentMethod);
+      const rSign = r.type === 'income' ? '+' : '-';
+      const line = `<b>${rSign}${formatMoney(r.amount, r.currency)}</b> — ${escapeHtml(r.description)} · ${pm}  <i>(${escapeHtml(dt)})</i>`;
+      const tentative = `${text}${header}<blockquote>${[...lines, line].join('\n')}</blockquote>\n\n`;
+      if (tentative.length > 3850) {
+        if (lines.length > 0) {
+          text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+        }
+        const rem = monthItems.length - renderedCount;
+        text += `<i>... yana ${rem} ta yozuv sig'madi</i>`;
+        return text.trim();
+      }
+      lines.push(line);
+      renderedCount++;
+    }
+
+    text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+  }
+  return text.trim();
+}
+
+export function formatPersonalByTimeText(records = []) {
+  const items = records
+    .slice()
+    .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt) || (b.id || 0) - (a.id || 0))
+    .slice(0, 60);
+
+  if (items.length === 0) {
+    return `<b>Vaqt bo'yicha</b>\n\n<i>Hozircha yozuvlar yo'q.</i>`;
+  }
+
+  const daysMap = new Map();
+  for (const r of items) {
+    const dayKey = getUztParts(r.createdAt).dateStr;
+    if (!daysMap.has(dayKey)) {
+      daysMap.set(dayKey, { dayLabel: formatYmdShortUz(dayKey), rows: [] });
+    }
+    daysMap.get(dayKey).rows.push(r);
+  }
+
+  let text = `<b>Vaqt bo'yicha</b> · So'nggi <i>(${items.length} ta)</i>\n\n`;
+  let renderedCount = 0;
+
+  for (const dayGroup of daysMap.values()) {
+    const header = `<b>${escapeHtml(dayGroup.dayLabel)}</b>\n`;
+    const lines = [];
+
+    for (const r of dayGroup.rows) {
+      const ms = toMs(r.createdAt);
+      const uzt = new Date(ms + UZT_OFFSET_MS);
+      const hhmm = `${String(uzt.getUTCHours()).padStart(2, '0')}:${String(uzt.getUTCMinutes()).padStart(2, '0')}`;
+      const pm = methodLabel(r.paymentMethod);
+      const sign = r.type === 'income' ? '+' : '-';
+      const catTag = r.type === 'income' ? 'Kirim' : r.category;
+      const line = `<code>${hhmm}</code> · ${pm} · <b>${sign}${formatMoney(r.amount, r.currency)}</b> — ${escapeHtml(r.description)} <i>(${escapeHtml(catTag)})</i>`;
+
+      const tentative = `${text}${header}<blockquote>${[...lines, line].join('\n')}</blockquote>\n\n`;
+      if (tentative.length > 3850) {
+        if (lines.length > 0) {
+          text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+        }
+        const rem = items.length - renderedCount;
+        text += `<i>... yana ${rem} ta yozuv sig'madi</i>`;
+        return text.trim();
+      }
+      lines.push(line);
+      renderedCount++;
+    }
+
+    text += `${header}<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+  }
+  return text.trim();
+}
+
+async function renderReport(api, chatId, messageId, userId, notice = '', viewMode = 'summary') {
+  const records = await getPersonalRecords(userId, { limit: 1000 });
+  const { nowUzt } = getUztTimeInfo();
+
+  let text;
+  if (viewMode === 'cat') {
+    text = formatPersonalByCategoryText(records);
+  } else if (viewMode === 'time') {
+    text = formatPersonalByTimeText(records);
+  } else {
+    text = formatPersonalReportText(records, formatUzDate(nowUzt), notice);
   }
 
   const rows = [
     [
+      {
+        text: `${viewMode === 'cat' ? '• ' : ''}Bo'limlar bo'yicha`,
+        callback_data: 'ind:r_cat',
+      },
+      {
+        text: `${viewMode === 'time' ? '• ' : ''}Vaqt bo'yicha`,
+        callback_data: 'ind:r_time',
+      },
+    ],
+    [
       { text: 'Yozuvlar', callback_data: 'ind:records' },
       { text: 'Tozalash', callback_data: 'ind:r_clear' },
     ],
-    [{ text: '← Orqaga', callback_data: 'ind:home' }],
+    [
+      ...(viewMode !== 'summary' ? [{ text: '← Hisobotga', callback_data: 'ind:report' }] : []),
+      { text: '← Kabinetga', callback_data: 'ind:home' },
+    ],
   ];
 
-  await editOrSend(api, chatId, messageId, text.trim(), { inline_keyboard: rows });
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
 
 async function renderRecords(api, chatId, messageId, userId, notice = '') {
   const recent = await getPersonalRecords(userId, { limit: 12 });
-  let text = notice ? `${notice}\n\n` : '';
-  text += `So'nggi yozuvlar\n\n`;
-  text += recent.length === 0 ? "Hozircha yozuvlar yo'q." : "O'chirish yoki Karta/Naqd usulini almashtirish uchun bosing.";
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>So'nggi yozuvlar</b>\n\n`;
+
+  if (recent.length === 0) {
+    text += `<i>Hozircha yozuvlar yo'q.</i>`;
+  } else {
+    const lines = recent.map((r) => {
+      const sign = r.type === 'income' ? '+' : '-';
+      const curMethod = methodLabel(r.paymentMethod);
+      const dt = formatUztDateTime(r.createdAt);
+      return `<code>${escapeHtml(dt)}</code> · ${curMethod} · <b>${sign}${formatMoney(r.amount, r.currency)}</b> — ${escapeHtml(r.description)}`;
+    });
+    text += `<blockquote>${lines.join('\n')}</blockquote>\n\n`;
+    text += `<i>O'chirish yoki Karta/Naqd usulini almashtirish uchun tugmani bosing.</i>`;
+  }
 
   const rows = recent.map((r) => {
     const sign = r.type === 'income' ? '+' : '-';
@@ -335,26 +524,27 @@ async function renderDebts(api, chatId, messageId, userId, notice = '') {
   const oweMe = debts.filter((d) => d.direction === 'owe_me');
   const iOwe = debts.filter((d) => d.direction === 'i_owe');
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Qarz daftari\n\n`;
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Qarz daftari</b>\n\n`;
 
   if (debts.length === 0) {
-    text += "Hozircha ochiq qarzlar yo'q.";
+    text += `<i>Hozircha ochiq qarzlar yo'q.</i>`;
   } else {
     if (oweMe.length > 0) {
-      text += `Haqqim (menga berishadi):\n`;
-      oweMe.forEach((d) => {
-        text += `• ${d.personName}: ${formatMoney(d.amount, d.currency)}${d.note ? ` (${d.note})` : ''}\n`;
-      });
-      text += '\n';
+      const lines = oweMe.map(
+        (d) =>
+          `<b>${escapeHtml(d.personName)}</b> — <b>${formatMoney(d.amount, d.currency)}</b>${d.note ? ` <i>(${escapeHtml(d.note)})</i>` : ''}`
+      );
+      text += `<b>Haqqim</b> <i>(menga berishadi)</i>\n<blockquote>${lines.join('\n')}</blockquote>\n\n`;
     }
     if (iOwe.length > 0) {
-      text += `Qarzim (men beraman):\n`;
-      iOwe.forEach((d) => {
-        text += `• ${d.personName}: ${formatMoney(d.amount, d.currency)}${d.note ? ` (${d.note})` : ''}\n`;
-      });
+      const lines = iOwe.map(
+        (d) =>
+          `<b>${escapeHtml(d.personName)}</b> — <b>${formatMoney(d.amount, d.currency)}</b>${d.note ? ` <i>(${escapeHtml(d.note)})</i>` : ''}`
+      );
+      text += `<b>Qarzim</b> <i>(men beraman)</i>\n<blockquote>${lines.join('\n')}</blockquote>\n\n`;
     }
-    text += `\nQaytarish yoki qisman to'lash uchun qarz ustiga bosing.`;
+    text += `<i>Qaytarish yoki qisman to'lash uchun qarz ustiga bosing.</i>`;
   }
 
   const rows = debts.slice(0, 10).map((d) => {
@@ -438,14 +628,17 @@ async function renderDebtDetail(api, chatId, messageId, userId, debtId) {
   }
 
   const isOweMe = debt.direction === 'owe_me';
-  const title = isOweMe ? `${debt.personName} · Haqqim` : `${debt.personName} · Qarzim`;
+  const title = isOweMe
+    ? `<b>${escapeHtml(debt.personName)}</b> · Haqqim`
+    : `<b>${escapeHtml(debt.personName)}</b> · Qarzim`;
   const actionNote = isOweMe
     ? "Qaytarilgan summa hamyoningizga Kirim sifatida qo'shiladi."
     : "To'langan summa hamyoningizdan chiqim sifatida ayriladi.";
 
-  let text = `${title}\nQoldiq: ${formatMoney(debt.amount, debt.currency)}`;
-  if (debt.note) text += `\nIzoh: ${debt.note}`;
-  text += `\n\n${actionNote}`;
+  let body = `Qoldiq — <b>${formatMoney(debt.amount, debt.currency)}</b>`;
+  if (debt.note) body += `\nIzoh — <i>${escapeHtml(debt.note)}</i>`;
+
+  const text = `${title}\n<blockquote>${body}</blockquote>\n\n<i>${actionNote}</i>`;
 
   const rows = [
     [
@@ -468,12 +661,11 @@ async function renderTasks(api, chatId, messageId, userId, editMode = false, not
   const doneSet = new Set(ps.completedTaskIndices);
   const reminderLabel = ps.reminderEnabled ? `${ps.reminderTime}` : "O'chirilgan";
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Kunlik vazifalar\n\n`;
-  text += `Bajarildi: ${doneSet.size} / ${ps.dailyTasks.length}\n`;
-  text += `Kunlik eslatma: ${reminderLabel}`;
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Kunlik vazifalar</b>\n\n`;
+  text += `<blockquote>Bajarildi — <b>${doneSet.size} / ${ps.dailyTasks.length}</b>\nKunlik eslatma — <b>${escapeHtml(reminderLabel)}</b></blockquote>`;
   if (editMode) {
-    text += `\nO'chirish uchun vazifa ustiga bosing.`;
+    text += `\n\n<i>O'chirish uchun vazifa ustiga bosing.</i>`;
   }
 
   const rows = ps.dailyTasks.map((task, idx) => {
@@ -502,9 +694,9 @@ async function renderTaskTime(api, chatId, messageId, userId, notice = '') {
   const ps = getPersonalSettings(session);
   const statusText = ps.reminderEnabled ? 'Yoqilgan' : "O'chirilgan";
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Shaxsiy eslatma vaqti\n\n`;
-  text += `Vaqt: ${ps.reminderTime} (UZT) · Holat: ${statusText}`;
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Shaxsiy eslatma vaqti</b>\n\n`;
+  text += `<blockquote>Vaqt — <b>${escapeHtml(ps.reminderTime)} (UZT)</b>\nHolat — <b>${statusText}</b></blockquote>`;
 
   const presets = ['07:00', '08:00', '09:00', '12:00', '18:00', '20:00', '21:00', '22:00'];
   const rows = [
@@ -524,10 +716,11 @@ async function renderLimits(api, chatId, messageId, userId, notice = '') {
   const session = await getAdminSession(userId);
   const ps = getPersonalSettings(session);
 
-  let text = notice ? `${notice}\n\n` : '';
-  text += `Xarajat limitlari\n\n`;
-  text += `Kunlik limit: ${ps.dailyLimit > 0 ? formatMoney(ps.dailyLimit, 'UZS') : "O'rnatilmagan"}\n`;
-  text += `Oylik limit: ${ps.monthlyLimit > 0 ? formatMoney(ps.monthlyLimit, 'UZS') : "O'rnatilmagan"}`;
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Xarajat limitlari</b>\n\n`;
+  const dailyStr = ps.dailyLimit > 0 ? formatMoney(ps.dailyLimit, 'UZS') : "O'rnatilmagan";
+  const monthlyStr = ps.monthlyLimit > 0 ? formatMoney(ps.monthlyLimit, 'UZS') : "O'rnatilmagan";
+  text += `<blockquote>Kunlik limit — <b>${dailyStr}</b>\nOylik limit — <b>${monthlyStr}</b></blockquote>`;
 
   const rows = [
     [
@@ -818,19 +1011,20 @@ function buildConfirmationPayload(record, stats, ps) {
   const method = record.paymentMethod === 'cash' ? 'cash' : 'card';
   const sign = isIncome ? '+' : '-';
   const header = isIncome
-    ? `Kirim (${methodLabel(method)})`
-    : `Chiqim (${record.category} · ${methodLabel(method)})`;
+    ? `<b>Kirim (${methodLabel(method)})</b>`
+    : `<b>Chiqim (${escapeHtml(record.category)} · ${methodLabel(method)})</b>`;
 
-  let confirm = `${header}: ${sign}${formatMoney(record.amount, record.currency)} · ${record.description}\n`;
-  confirm += `Hamyon: ${formatMoney(stats.walletUzs, 'UZS')} (Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})`;
+  let body = `<b>${sign}${formatMoney(record.amount, record.currency)}</b> — ${escapeHtml(record.description)}\n`;
+  body += `Hamyon — <b>${formatMoney(stats.walletUzs, 'UZS')}</b> <i>(Karta: ${formatMoney(stats.cardBalanceUzs, 'UZS')} · Naqd: ${formatMoney(stats.cashBalanceUzs, 'UZS')})</i>`;
 
   if (!isIncome && ps?.dailyLimit > 0 && record.currency === 'UZS') {
     const rem = ps.dailyLimit - stats.todaySpentUzs;
-    confirm += `\nBugungi limit qoldig'i: ${formatMoney(rem, 'UZS')}`;
+    body += `\nBugungi limit qoldig'i — <b>${formatMoney(rem, 'UZS')}</b>`;
   }
 
   return {
-    text: confirm,
+    text: `${header}\n<blockquote>${body}</blockquote>`,
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [
@@ -889,7 +1083,13 @@ export async function handleIndividualCallback(api, callbackQuery) {
   }
 
   if (action === 'report') {
-    await renderReport(api, chatId, messageId, userId);
+    await renderReport(api, chatId, messageId, userId, '', 'summary');
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'r_cat' || action === 'r_time') {
+    await renderReport(api, chatId, messageId, userId, '', action === 'r_cat' ? 'cat' : 'time');
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }
@@ -911,12 +1111,12 @@ export async function handleIndividualCallback(api, callbackQuery) {
     }
     const sign = rec.type === 'income' ? '+' : '-';
     const curMethod = rec.paymentMethod === 'cash' ? 'cash' : 'card';
-    const summary = `${sign}${formatMoney(rec.amount, rec.currency)} · ${rec.description} (${methodLabel(curMethod)})`;
+    const summary = `<b>${sign}${formatMoney(rec.amount, rec.currency)}</b> — ${escapeHtml(rec.description)} <i>(${methodLabel(curMethod)})</i>`;
     await editOrSend(
       api,
       chatId,
       messageId,
-      `1-tasdiqlash: Ushbu yozuvni o'chirasizmi? (1/2)\n\n${summary}`,
+      `<b>1-tasdiqlash</b> · Ushbu yozuvni o'chirasizmi? <i>(1/2)</i>\n\n<blockquote>${summary}</blockquote>`,
       {
         inline_keyboard: [
           [{ text: "Yo'q, bekor qilish", callback_data: 'ind:records' }],
@@ -939,12 +1139,12 @@ export async function handleIndividualCallback(api, callbackQuery) {
     }
     const sign = rec.type === 'income' ? '+' : '-';
     const curMethod = rec.paymentMethod === 'cash' ? 'cash' : 'card';
-    const summary = `${sign}${formatMoney(rec.amount, rec.currency)} · ${rec.description} (${methodLabel(curMethod)})`;
+    const summary = `<b>${sign}${formatMoney(rec.amount, rec.currency)}</b> — ${escapeHtml(rec.description)} <i>(${methodLabel(curMethod)})</i>`;
     await editOrSend(
       api,
       chatId,
       messageId,
-      `2-tasdiqlash: Aniq butunlay o'chirasizmi? (2/2)\n\n${summary}\nBu amalni ortga qaytarib bo'lmaydi.`,
+      `<b>2-tasdiqlash</b> · Aniq butunlay o'chirasizmi? <i>(2/2)</i>\n\n<blockquote>${summary}</blockquote>\n<i>Bu amalni ortga qaytarib bo'lmaydi.</i>`,
       {
         inline_keyboard: [
           [{ text: "← Yo'q, qolsin", callback_data: 'ind:records' }],

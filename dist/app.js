@@ -241,10 +241,16 @@
 
     const aptRow = document.getElementById('apartmentRow');
     const aptBal = document.getElementById('apartmentBalance');
+    const aptLbl = aptRow ? aptRow.querySelector('.field-label') : null;
     if (state.data.apartment) {
       const bal = state.data.apartment.balance || 0;
       const sign = bal > 0 ? '+' : '';
       aptRow.hidden = false;
+      if (aptLbl) {
+        aptLbl.textContent = state.data.apartment.weekLabel
+          ? 'Kvartira (' + state.data.apartment.weekLabel + ')'
+          : 'Kvartira balansi';
+      }
       aptBal.textContent = sign + formatMoney(bal, state.data.apartment.currency);
       aptBal.classList.toggle('is-positive', bal > 0);
       aptBal.classList.toggle('is-negative', bal < 0);

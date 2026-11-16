@@ -867,7 +867,8 @@ export async function getUserApartmentBalance(userId, username) {
 
   const unsettled = await getExpenses(grp.id, { limit: 10000, includeSettled: false });
   if (!unsettled || unsettled.length === 0) {
-    return { groupName: grp.groupName || 'Guruh', balance: 0, currency: 'UZS' };
+    const currentWeekLabel = getUztTimeInfo().currentWeek?.label || null;
+    return { groupName: grp.groupName || 'Guruh', balance: 0, currency: 'UZS', weekLabel: currentWeekLabel };
   }
 
   const targetWeek = pickActiveTargetWeek(unsettled);
@@ -885,7 +886,14 @@ export async function getUserApartmentBalance(userId, username) {
     }
   }
 
-  return foundAny ? { groupName: grp.groupName || 'Guruh', balance: totalBal, currency: 'UZS' } : null;
+  return foundAny
+    ? {
+        groupName: grp.groupName || 'Guruh',
+        balance: totalBal,
+        currency: 'UZS',
+        weekLabel: targetWeek?.label || null,
+      }
+    : null;
 }
 
 export async function checkPersonalReminders(api) {
