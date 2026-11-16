@@ -1,6 +1,7 @@
 import { api } from 'sdk';
 import {
   getExpense,
+  getExpenses,
   deleteExpense,
   settleGroup,
   resetGroup,
@@ -11,6 +12,7 @@ import {
   touchMessageDeletion,
   cancelMessageDeletion,
   cleanupPendingDeletions,
+  syncGroupWeeklyReports,
 } from '../lib/db-service.js';
 import {
   getDutyRosterList,
@@ -19,6 +21,11 @@ import {
   formatMinimalDutyNotification,
   getUztTimeInfo,
   getGroupSettings,
+  buildDetailReportText,
+  formatWeeklyHistoryText,
+  buildWeekReportKeyboard,
+  buildWeeklyHistoryKeyboard,
+  getWeekRangeFromStart,
 } from '../lib/settlement.js';
 import { isCreatorOrAdmin } from '../lib/auth.js';
 import { handleAdminCallback } from '../lib/admin-panel.js';
@@ -304,7 +311,43 @@ export default async function (callbackQuery, ctx) {
     return;
   }
 
-  if (data === 'confirm_settle') {
+  if (data === 'wk:list' || (data && data.startsWith('wk:show:'))) {
+    const savedReports = await syncGroupWeeklyReports(chatId);
+    let nextText;
+    let nextMarkup;
+
+    if (data === 'wk:list') {
+      nextText = formatWeeklyHistoryText(savedReports);
+      nextMarkup = buildWeeklyHistoryKeyboard(savedReports);
+    } else {
+      const targetWeekStart = data.replace('wk:show:', '').trim();
+      const mems = await getMembers(chatId);
+      const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
+      const grp = await getGroup(chatId);
+      nextText = buildDetailReportText(mems, allExpenses, grp, {
+        weekStart: targetWeekStart,
+        savedReports,
+      });
+      nextMarkup = buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart);
+    }
+
+    try {
+      await api.editMessageText({
+        chat_id: chatId,
+        message_id: messageId,
+        text: nextText,
+        reply_markup: nextMarkup,
+      });
+    } catch (err) {
+      if (!String(err?.description || err?.message || '').includes('message is not modified')) {
+        throw err;
+      }
+    }
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (data === 'confirm_settle' || (data && data.startsWith('confirm_settle:'))) {
     const isAdmin = await isCreatorOrAdmin(chatId, userId, username);
     if (!isAdmin) {
       await api.answerCallbackQuery({
@@ -315,11 +358,13 @@ export default async function (callbackQuery, ctx) {
       return;
     }
 
-    await settleGroup(chatId);
+    const explicitWeekStart = data.includes(':') ? data.split(':')[1] : null;
+    const res = await settleGroup(chatId, explicitWeekStart);
+    const weekLabel = res?.weekStart ? getWeekRangeFromStart(res.weekStart).label : 'Joriy hafta';
     await api.editMessageText({
       chat_id: chatId,
       message_id: messageId,
-      text: 'Barcha hisob-kitoblar nollandi (yangi davr boshlandi).',
+      text: `${weekLabel} hisob-kitoblari nollandi va arxivlandi (${res?.settledCount || 0} ta xarajat). Yangi hafta alohida saqlanadi.`,
     });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Nollandi!' });
     return;

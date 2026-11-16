@@ -35,18 +35,88 @@ export function getGroupSettings(group) {
   };
 }
 
+const MONTHS_UZ = [
+  'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun',
+  'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr',
+];
+
+export function toMs(val) {
+  if (!val) return 0;
+  if (val instanceof Date) return val.getTime();
+  if (typeof val === 'number') return val < 1e12 ? val * 1000 : val;
+  const parsed = Date.parse(val);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+function formatYmdFromUtcDate(d) {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function formatYmdShortUz(ymd) {
+  if (!ymd || typeof ymd !== 'string') return '';
+  const parts = ymd.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return ymd;
+  const [, month, day] = parts;
+  return `${day}-${MONTHS_UZ[month - 1] || month}`;
+}
+
+export function formatWeekRangeLabel(weekStart, weekEnd) {
+  return `${formatYmdShortUz(weekStart)} – ${formatYmdShortUz(weekEnd)}`;
+}
+
+export function getWeekRangeFromStart(weekStart) {
+  const parts = String(weekStart || '').split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return getWeekRangeUzt();
+  const [y, m, d] = parts;
+  const monUztMs = Date.UTC(y, m - 1, d, 0, 0, 0, 0);
+  const sunUztMs = monUztMs + 6 * DAY_MS;
+  const sunEndUztMs = monUztMs + 7 * DAY_MS - 1000;
+  const weekEnd = formatYmdFromUtcDate(new Date(sunUztMs));
+  return {
+    weekStart: formatYmdFromUtcDate(new Date(monUztMs)),
+    weekEnd,
+    label: formatWeekRangeLabel(weekStart, weekEnd),
+    startSec: Math.floor((monUztMs - UZT_OFFSET_MS) / 1000),
+    endSec: Math.floor((sunEndUztMs - UZT_OFFSET_MS) / 1000),
+  };
+}
+
+export function getWeekRangeUzt(tsVal = null) {
+  const baseMs = tsVal ? toMs(tsVal) : Date.now();
+  const uztMs = baseMs + UZT_OFFSET_MS;
+  const uztDate = new Date(uztMs);
+  const dayOfWeek = uztDate.getUTCDay(); // 0 = Sunday, 1 = Monday, ...
+  const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monUztMs = Date.UTC(
+    uztDate.getUTCFullYear(),
+    uztDate.getUTCMonth(),
+    uztDate.getUTCDate() - diffToMonday,
+    0,
+    0,
+    0,
+    0
+  );
+  const weekStart = formatYmdFromUtcDate(new Date(monUztMs));
+  const range = getWeekRangeFromStart(weekStart);
+  return {
+    ...range,
+    dateStr: formatYmdFromUtcDate(uztDate),
+  };
+}
+
 export function getUztTimeInfo() {
   const nowUztMs = Date.now() + UZT_OFFSET_MS;
   const nowUzt = new Date(nowUztMs);
-  const yyyy = nowUzt.getUTCFullYear();
-  const mm = String(nowUzt.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(nowUzt.getUTCDate()).padStart(2, '0');
-  const dateStr = `${yyyy}-${mm}-${dd}`;
+  const dateStr = formatYmdFromUtcDate(nowUzt);
   const hh = String(nowUzt.getUTCHours()).padStart(2, '0');
   const min = String(nowUzt.getUTCMinutes()).padStart(2, '0');
   const timeStr = `${hh}:${min}`;
   const dayIndex = Math.floor(nowUztMs / DAY_MS);
-  return { nowUzt, dateStr, timeStr, dayIndex };
+  const currentWeek = getWeekRangeUzt(Date.now());
+  return { nowUzt, dateStr, timeStr, dayIndex, currentWeek };
 }
 
 export function normalizeName(str) {
@@ -256,18 +326,102 @@ export function getDutySchedule(group, members, daysCount = 7) {
   return schedule;
 }
 
-export function buildDetailReportText(groupMembers, allExpenses, grp) {
-  if (!allExpenses || allExpenses.length === 0) {
-    return "Hozircha xarajatlar yo'q.";
+export function groupExpensesByWeek(allExpenses = []) {
+  const weekMap = new Map();
+  for (const exp of allExpenses) {
+    const wr = getWeekRangeUzt(exp.createdAt);
+    if (!weekMap.has(wr.weekStart)) {
+      weekMap.set(wr.weekStart, {
+        weekStart: wr.weekStart,
+        weekEnd: wr.weekEnd,
+        label: wr.label,
+        startSec: wr.startSec,
+        endSec: wr.endSec,
+        expenses: [],
+        unsettledExpenses: [],
+        isSettled: true,
+      });
+    }
+    const bucket = weekMap.get(wr.weekStart);
+    bucket.expenses.push(exp);
+    if (exp.settled === 0) {
+      bucket.unsettledExpenses.push(exp);
+      bucket.isSettled = false;
+    }
+  }
+  return Array.from(weekMap.values()).sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+}
+
+export function pickActiveTargetWeek(allExpenses = []) {
+  const current = getWeekRangeUzt();
+  const buckets = groupExpensesByWeek(allExpenses);
+  const unsettledBuckets = buckets.filter((b) => b.unsettledExpenses.length > 0);
+  if (unsettledBuckets.length > 0) {
+    // Always prioritize the earliest unsettled week so older finished weeks
+    // (e.g., 9-15 Nov) settle cleanly without mixing in newer weeks (16 Nov+).
+    return unsettledBuckets[unsettledBuckets.length - 1];
+  }
+  const currentBucket = buckets.find((b) => b.weekStart === current.weekStart);
+  if (currentBucket) return currentBucket;
+  return {
+    weekStart: current.weekStart,
+    weekEnd: current.weekEnd,
+    label: current.label,
+    startSec: current.startSec,
+    endSec: current.endSec,
+    expenses: [],
+    unsettledExpenses: [],
+    isSettled: false,
+  };
+}
+
+export function calculateSettlementTransfers(balancesByName) {
+  const debtors = [];
+  const creditors = [];
+
+  for (const [name, bal] of balancesByName.entries()) {
+    if (bal < -0.05) debtors.push({ name, amt: -bal });
+    else if (bal > 0.05) creditors.push({ name, amt: bal });
   }
 
-  const settings = getGroupSettings(grp);
-  const unsettledExpenses = allExpenses.filter((e) => e.settled === 0);
-  const activeList = unsettledExpenses.length > 0 ? unsettledExpenses : allExpenses;
-  const isShowingSettled = unsettledExpenses.length === 0;
+  debtors.sort((a, b) => b.amt - a.amt);
+  creditors.sort((a, b) => b.amt - a.amt);
 
+  const transfers = [];
+  let i = 0;
+  let j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const d = debtors[i];
+    const c = creditors[j];
+    const amt = Math.min(d.amt, c.amt);
+    const rounded = Math.round(amt * 10) / 10;
+    if (rounded > 0.05) {
+      transfers.push({ from: d.name, to: c.name, amount: rounded });
+    }
+    d.amt -= amt;
+    c.amt -= amt;
+    if (d.amt <= 0.05) i++;
+    if (c.amt <= 0.05) j++;
+  }
+  return transfers;
+}
+
+export function formatWeeklyDelta(currentAmount, previousAmount, currency = 'UZS') {
+  if (previousAmount === null || previousAmount === undefined || previousAmount <= 0) {
+    return null;
+  }
+  const diff = Math.round((currentAmount - previousAmount) * 10) / 10;
+  if (Math.abs(diff) <= 0.05) {
+    return "O'tgan hafta bilan teng (0%)";
+  }
+  const pct = Math.round((diff / previousAmount) * 1000) / 10;
+  const sign = diff > 0 ? '+' : '';
+  return `${sign}${formatMoney(diff, currency)} (${sign}${pct}%)`;
+}
+
+function buildMemberNameMap(groupMembers = [], expensesList = []) {
   const memberMap = new Map();
-  for (const exp of allExpenses) {
+  for (const exp of expensesList) {
     if (exp.payerId && exp.payerName) {
       memberMap.set(Number(exp.payerId), exp.payerName);
     }
@@ -275,7 +429,24 @@ export function buildDetailReportText(groupMembers, allExpenses, grp) {
   for (const m of groupMembers) {
     memberMap.set(Number(m.telegramId), m.name);
   }
+  return memberMap;
+}
 
+export function computeWeeklyReportSnapshot(
+  groupMembers,
+  weekExpenses,
+  grp,
+  weekStart,
+  weekEnd,
+  previousReport = null
+) {
+  const settings = getGroupSettings(grp);
+  const label = formatWeekRangeLabel(weekStart, weekEnd);
+  const unsettled = weekExpenses.filter((e) => e.settled === 0);
+  const isSettled = weekExpenses.length > 0 && unsettled.length === 0;
+  const activeList = unsettled.length > 0 ? unsettled : weekExpenses;
+
+  const memberMap = buildMemberNameMap(groupMembers, weekExpenses);
   const byCurrency = {};
   for (const exp of activeList) {
     const c = (exp.currency || 'UZS').toUpperCase();
@@ -283,15 +454,43 @@ export function buildDetailReportText(groupMembers, allExpenses, grp) {
     byCurrency[c].push(exp);
   }
 
-  let resp = isShowingSettled ? 'Hisobot (Nollangan tarix)\n\n' : 'Hisobot\n\n';
   const balancesByCur = calculateBalances(groupMembers, activeList, grp);
+  const totalByCurrency = {};
+  const fairShareByCurrency = {};
+  const breakdownByName = new Map();
+  const transfers = [];
+  let participantCount = 0;
+
+  let resp = `Hisobot · ${label}${isSettled ? ' (Yopilgan)' : ''}\n\n`;
+
+  if (activeList.length === 0) {
+    resp += `${label} haftasi uchun xarajatlar yo'q.`;
+    return {
+      weekStart,
+      weekEnd,
+      label,
+      totalByCurrency,
+      expenseCount: 0,
+      participantCount: 0,
+      fairShareByCurrency,
+      memberBreakdown: [],
+      transfers: [],
+      reportText: resp,
+      isSettled: false,
+    };
+  }
 
   for (const [cur, curExpenses] of Object.entries(byCurrency)) {
     const balances = balancesByCur[cur] || {};
     const participantIds = Object.keys(balances).map(Number);
     const numPeople = participantIds.length || groupMembers.length || 1;
-    const totalSpent = curExpenses.reduce((sum, e) => sum + e.amount, 0);
-    const fairShare = totalSpent / numPeople;
+    if (numPeople > participantCount) participantCount = numPeople;
+
+    const totalSpent = Math.round(curExpenses.reduce((sum, e) => sum + e.amount, 0) * 10) / 10;
+    const fairShare = Math.round((totalSpent / numPeople) * 10) / 10;
+
+    totalByCurrency[cur] = totalSpent;
+    fairShareByCurrency[cur] = fairShare;
 
     const spending = {};
     for (const pid of participantIds) spending[pid] = 0;
@@ -301,6 +500,14 @@ export function buildDetailReportText(groupMembers, allExpenses, grp) {
     }
 
     resp += `Jami xarajat: ${formatMoney(totalSpent, cur)} (${curExpenses.length} ta)\n`;
+
+    const prevTotals = previousReport?.totalByCurrency || {};
+    const prevSpent = prevTotals[cur];
+    const deltaText = formatWeeklyDelta(totalSpent, prevSpent, cur);
+    if (deltaText) {
+      resp += `O'tgan haftaga nisbatan: ${deltaText}\n`;
+    }
+
     resp += `Har bir kishiga: ${formatMoney(fairShare, cur)}\n\n`;
 
     resp += "Kim qancha to'ladi:\n";
@@ -312,33 +519,186 @@ export function buildDetailReportText(groupMembers, allExpenses, grp) {
     const sortedSpending = Array.from(spendingByName.entries()).sort((a, b) => b[1] - a[1]);
     for (const [name, amt] of sortedSpending) {
       resp += `${name}: ${formatMoney(amt, cur)}\n`;
+      if (!breakdownByName.has(name)) {
+        breakdownByName.set(name, { name, paidByCurrency: {}, balanceByCurrency: {} });
+      }
+      breakdownByName.get(name).paidByCurrency[cur] = Math.round(amt * 10) / 10;
     }
 
-    if (!isShowingSettled) {
-      resp += '\nBalans:\n';
-      const balancesByName = new Map();
-      for (const [mid, bal] of Object.entries(balances)) {
-        const name = memberMap.get(Number(mid)) || 'Unknown';
-        balancesByName.set(name, (balancesByName.get(name) || 0) + bal);
+    resp += '\nBalans:\n';
+    const balancesByName = new Map();
+    for (const [mid, bal] of Object.entries(balances)) {
+      const name = memberMap.get(Number(mid)) || 'Unknown';
+      balancesByName.set(name, (balancesByName.get(name) || 0) + bal);
+    }
+    const sortedBal = Array.from(balancesByName.entries()).sort((a, b) => b[1] - a[1]);
+    for (const [name, bal] of sortedBal) {
+      const roundedBal = Math.round(bal * 10) / 10;
+      const sign = roundedBal > 0 ? '+' : '';
+      resp += Math.abs(roundedBal) > 0.05 ? `${name}: ${sign}${formatMoney(roundedBal, cur)}\n` : `${name}: 0\n`;
+      if (!breakdownByName.has(name)) {
+        breakdownByName.set(name, { name, paidByCurrency: {}, balanceByCurrency: {} });
       }
-      const sortedBal = Array.from(balancesByName.entries()).sort((a, b) => b[1] - a[1]);
-      for (const [name, bal] of sortedBal) {
-        const sign = bal > 0 ? '+' : '';
-        if (Math.abs(bal) > 0.05) {
-          resp += `${name}: ${sign}${formatMoney(bal, cur)}\n`;
-        } else {
-          resp += `${name}: 0\n`;
-        }
-      }
+      breakdownByName.get(name).balanceByCurrency[cur] = roundedBal;
+    }
 
-      if (settings.showPaymentInfo && settings.paymentInfo) {
-        resp += `\nTo'lov uchun (Pay to):\n${settings.paymentInfo}\n`;
+    const curTransfers = calculateSettlementTransfers(balancesByName);
+    if (curTransfers.length > 0) {
+      resp += `\nTo'lovlar (${cur}):\n`;
+      for (const tr of curTransfers) {
+        resp += `• ${tr.from} → ${tr.to}: ${formatMoney(tr.amount, cur)}\n`;
+        transfers.push({ currency: cur, ...tr });
       }
+    }
+
+    if (!isSettled && settings.showPaymentInfo && settings.paymentInfo) {
+      resp += `\nTo'lov uchun (Pay to):\n${settings.paymentInfo}\n`;
     }
     resp += '\n';
   }
 
-  return resp.trim();
+  return {
+    weekStart,
+    weekEnd,
+    label,
+    totalByCurrency,
+    expenseCount: activeList.length,
+    participantCount,
+    fairShareByCurrency,
+    memberBreakdown: Array.from(breakdownByName.values()),
+    transfers,
+    reportText: resp.trim(),
+    isSettled,
+  };
+}
+
+export function buildDetailReportText(groupMembers, allExpenses, grp, options = {}) {
+  const { weekStart = null, savedReports = [], showOtherWeekNotice = true } = options;
+  const buckets = groupExpensesByWeek(allExpenses || []);
+  const target = weekStart
+    ? buckets.find((b) => b.weekStart === weekStart) || getWeekRangeFromStart(weekStart)
+    : pickActiveTargetWeek(allExpenses || []);
+
+  const targetBucket = {
+    weekStart: target.weekStart,
+    weekEnd: target.weekEnd,
+    label: target.label || formatWeekRangeLabel(target.weekStart, target.weekEnd),
+    expenses: target.expenses || [],
+  };
+
+  const previousReport =
+    savedReports.find((r) => r.weekStart < targetBucket.weekStart && (r.expenseCount || 0) > 0) || null;
+  const archivedReport =
+    targetBucket.expenses.length === 0
+      ? savedReports.find((r) => r.weekStart === targetBucket.weekStart && (r.expenseCount || 0) > 0)
+      : null;
+
+  if (archivedReport?.reportText) {
+    return archivedReport.reportText;
+  }
+
+  const snap = computeWeeklyReportSnapshot(
+    groupMembers,
+    targetBucket.expenses,
+    grp,
+    targetBucket.weekStart,
+    targetBucket.weekEnd,
+    previousReport
+  );
+
+  let text = snap.reportText;
+
+  if (showOtherWeekNotice) {
+    const newerUnsettled = buckets.filter(
+      (b) => b.weekStart > targetBucket.weekStart && b.unsettledExpenses.length > 0
+    );
+    if (newerUnsettled.length > 0) {
+      const totalNewer = newerUnsettled.reduce((s, b) => s + b.unsettledExpenses.length, 0);
+      const newest = newerUnsettled[0];
+      text += `\n\nEslatma: ${newest.label} haftasida ${totalNewer} ta yangi xarajat alohida saqlanmoqda (/weeks).`;
+    }
+  }
+
+  return text;
+}
+
+export function formatWeeklyHistoryText(reports = []) {
+  if (!reports || reports.length === 0) {
+    return "Hozircha saqlangan haftalik hisobotlar yo'q.";
+  }
+
+  const ordered = [...reports].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+  let text = "Haftalik hisobotlar tarixi\n\n";
+
+  for (let i = 0; i < ordered.length; i++) {
+    const rep = ordered[i];
+    const prev = ordered.slice(i + 1).find((p) => (p.expenseCount || 0) > 0) || null;
+    const label = formatWeekRangeLabel(rep.weekStart, rep.weekEnd);
+    const status = rep.isSettled ? 'Yopilgan' : 'Ochiq';
+    const totals = rep.totalByCurrency || {};
+    const curs = Object.keys(totals);
+    const summary =
+      curs.length > 0
+        ? curs.map((c) => formatMoney(totals[c], c)).join(' · ')
+        : '0 ming';
+
+    text += `${i + 1}. ${label} (${status})\n`;
+    text += `   Jami: ${summary} (${rep.expenseCount || 0} ta)`;
+
+    if (prev && curs.length > 0) {
+      const mainCur = curs.includes('UZS') ? 'UZS' : curs[0];
+      const delta = formatWeeklyDelta(totals[mainCur], prev.totalByCurrency?.[mainCur], mainCur);
+      if (delta) {
+        text += ` · ${delta}`;
+      }
+    }
+    text += '\n\n';
+  }
+
+  return text.trim();
+}
+
+export function buildWeekReportKeyboard(allExpenses = [], savedReports = [], activeWeekStart) {
+  const weekStarts = new Set();
+  for (const r of savedReports || []) {
+    if (r?.weekStart) weekStarts.add(r.weekStart);
+  }
+  for (const b of groupExpensesByWeek(allExpenses || [])) {
+    weekStarts.add(b.weekStart);
+  }
+  if (activeWeekStart) weekStarts.add(activeWeekStart);
+
+  const sorted = Array.from(weekStarts).sort((a, b) => b.localeCompare(a)).slice(0, 4);
+  if (sorted.length <= 1 && (!savedReports || savedReports.length === 0)) {
+    return undefined;
+  }
+
+  const rows = [];
+  for (let i = 0; i < Math.min(2, sorted.length); i += 2) {
+    const pair = sorted.slice(i, i + 2).map((ws) => {
+      const r = getWeekRangeFromStart(ws);
+      const prefix = ws === activeWeekStart ? '• ' : '';
+      return { text: `${prefix}${r.label}`, callback_data: `wk:show:${ws}` };
+    });
+    rows.push(pair);
+  }
+  rows.push([{ text: 'Haftalar tarixi', callback_data: 'wk:list' }]);
+  return { inline_keyboard: rows };
+}
+
+export function buildWeeklyHistoryKeyboard(reports = []) {
+  const ordered = [...(reports || [])]
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+    .slice(0, 6);
+  const rows = [];
+  for (let i = 0; i < ordered.length; i += 2) {
+    const pair = ordered.slice(i, i + 2).map((rep) => {
+      const label = formatWeekRangeLabel(rep.weekStart, rep.weekEnd);
+      return { text: label, callback_data: `wk:show:${rep.weekStart}` };
+    });
+    rows.push(pair);
+  }
+  return rows.length > 0 ? { inline_keyboard: rows } : undefined;
 }
 
 export const DEFAULT_PERSONAL_TASKS = ['Sport', "Kitob o'qish"];

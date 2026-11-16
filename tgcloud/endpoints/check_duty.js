@@ -6,12 +6,34 @@ import {
   cleanupPendingDeletions,
   cleanupTrialGroup,
   checkPersonalReminders,
+  syncGroupWeeklyReports,
 } from '../lib/db-service.js';
 
 export default async function (input, ctx) {
   if (input?.cleanupTrial) {
     const res = await cleanupTrialGroup();
     return { ok: true, cleanup: res };
+  }
+
+  if (input?.backfillWeeks || input?.inspectWeeks) {
+    const groupsList = await getAllGroups();
+    const summary = [];
+    for (const grp of groupsList) {
+      const reports = await syncGroupWeeklyReports(grp.id);
+      summary.push({
+        groupId: grp.id,
+        groupName: grp.groupName,
+        weeks: reports.map((r) => ({
+          weekStart: r.weekStart,
+          weekEnd: r.weekEnd,
+          expenseCount: r.expenseCount,
+          totalByCurrency: r.totalByCurrency,
+          isSettled: Boolean(r.isSettled),
+          transfers: r.transfers,
+        })),
+      });
+    }
+    return { ok: true, groups: summary };
   }
 
   // Sweep expired messages
@@ -24,6 +46,7 @@ export default async function (input, ctx) {
       const mems = await getMembers(grp.id);
       const sent = await checkAndAnnounceDuty(api, grp, mems);
       if (sent) announced.push(grp.id);
+      await syncGroupWeeklyReports(grp.id);
     } catch (err) {
       console.warn(`Could not check duty for group ${grp?.id}:`, err?.message || err);
     }

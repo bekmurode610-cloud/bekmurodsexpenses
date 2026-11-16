@@ -18,6 +18,7 @@ import {
   setAdminSession,
   syncChatAdmins,
   deleteGroupById,
+  syncGroupWeeklyReports,
 } from './db-service.js';
 import {
   DEFAULT_DUTY_TASKS,
@@ -29,6 +30,12 @@ import {
   formatUzDate,
   normalizeName,
   buildDetailReportText,
+  pickActiveTargetWeek,
+  formatWeeklyHistoryText,
+  formatWeekRangeLabel,
+  getWeekRangeFromStart,
+  getWeekRangeUzt,
+  formatYmdShortUz,
 } from './settlement.js';
 import { syncGroupCommandMenu } from './commands.js';
 import { formatMoney } from './format.js';
@@ -37,6 +44,7 @@ import { isCreatorOrAdmin } from './auth.js';
 const CONTROLLABLE_COMMANDS = [
   { key: '/duty', label: '/duty' },
   { key: '/detail', label: '/detail' },
+  { key: '/weeks', label: '/weeks' },
   { key: '/expenses', label: '/expenses' },
   { key: '/members', label: '/members' },
   { key: '/delete', label: '/delete' },
@@ -376,10 +384,15 @@ async function renderMembersMenu(api, chatId, messageId, ctxData, notice = '') {
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
 
-async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '') {
+async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '', explicitWeekStart = null) {
   const { grp, mems } = ctxData;
   const allExpenses = await getExpenses(grp.id, { limit: 10000, includeSettled: true });
-  const report = buildDetailReportText(mems, allExpenses, grp);
+  const savedReports = await syncGroupWeeklyReports(grp.id);
+  const targetWeekStart = explicitWeekStart || pickActiveTargetWeek(allExpenses).weekStart;
+  const report = buildDetailReportText(mems, allExpenses, grp, {
+    weekStart: targetWeekStart,
+    savedReports,
+  });
 
   let text = notice ? `${notice}\n\n` : '';
   text += `${report}`;
@@ -390,13 +403,37 @@ async function renderExpensesMenu(api, chatId, messageId, ctxData, notice = '') 
   const rows = [
     [
       { text: "Ro'yxat / O'chirish", callback_data: 'adm:e_list' },
-      { text: 'Guruhga yuborish', callback_data: 'adm:e_post' },
+      { text: 'Haftalar tarixi', callback_data: 'adm:e_weeks' },
     ],
     [
-      { text: 'Nollash (Settle)', callback_data: 'adm:e_settle' },
-      { text: 'Tozalash (Reset)', callback_data: 'adm:e_reset' },
+      { text: 'Guruhga yuborish', callback_data: `adm:e_post:${targetWeekStart}` },
+      { text: 'Shu haftani nollash', callback_data: `adm:e_settle:${targetWeekStart}` },
     ],
-    [{ text: '← Orqaga', callback_data: 'adm:home' }],
+    [
+      { text: 'Tozalash (Reset)', callback_data: 'adm:e_reset' },
+      { text: '← Orqaga', callback_data: 'adm:home' },
+    ],
+  ];
+
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+}
+
+async function renderAdminWeeklyHistory(api, chatId, messageId, ctxData) {
+  const { grp } = ctxData;
+  const savedReports = await syncGroupWeeklyReports(grp.id);
+  const text = formatWeeklyHistoryText(savedReports);
+
+  const weekButtons = [...savedReports]
+    .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+    .slice(0, 8)
+    .map((rep) => ({
+      text: `${rep.isSettled ? '✓ ' : ''}${formatWeekRangeLabel(rep.weekStart, rep.weekEnd)}`,
+      callback_data: `adm:e_week:${rep.weekStart}`,
+    }));
+
+  const rows = [
+    ...chunkButtons(weekButtons, 2),
+    [{ text: '← Orqaga', callback_data: 'adm:exps' }],
   ];
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -414,12 +451,16 @@ async function renderExpenseList(api, chatId, messageId, ctxData, notice = '') {
     text += "O'chirish uchun xarajatni bosing.";
   }
 
-  const rows = recent.map((exp) => [
-    {
-      text: `× #${exp.id} ${exp.payerName} · ${formatMoney(exp.amount, exp.currency)} (${exp.description})`,
-      callback_data: `adm:e_del:${exp.id}`,
-    },
-  ]);
+  const rows = recent.map((exp) => {
+    const wr = getWeekRangeUzt(exp.createdAt);
+    const dTag = formatYmdShortUz(wr.dateStr);
+    return [
+      {
+        text: `× [${dTag}] ${exp.payerName} · ${formatMoney(exp.amount, exp.currency)} (${exp.description})`,
+        callback_data: `adm:e_del:${exp.id}`,
+      },
+    ];
+  });
   rows.push([{ text: '← Orqaga', callback_data: 'adm:exps' }]);
 
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
@@ -1021,6 +1062,18 @@ export async function handleAdminCallback(api, callbackQuery) {
     return;
   }
 
+  if (action === 'e_weeks') {
+    await renderAdminWeeklyHistory(api, chatId, messageId, ctxData);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'e_week') {
+    await renderExpensesMenu(api, chatId, messageId, ctxData, '', arg || null);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
   if (action === 'e_list') {
     await renderExpenseList(api, chatId, messageId, ctxData);
     await api.answerCallbackQuery({ callback_query_id: cbId });
@@ -1040,22 +1093,30 @@ export async function handleAdminCallback(api, callbackQuery) {
 
   if (action === 'e_post') {
     const allExpenses = await getExpenses(grp.id, { limit: 10000, includeSettled: true });
-    const report = buildDetailReportText(mems, allExpenses, grp);
+    const savedReports = await syncGroupWeeklyReports(grp.id);
+    const targetWeekStart = arg || pickActiveTargetWeek(allExpenses).weekStart;
+    const report = buildDetailReportText(mems, allExpenses, grp, {
+      weekStart: targetWeekStart,
+      savedReports,
+    });
     await api.sendMessage({ chat_id: grp.id, text: report });
     await api.answerCallbackQuery({ callback_query_id: cbId, text: '📢 Hisobot guruhga yuborildi!' });
     return;
   }
 
   if (action === 'e_settle') {
+    const allExpenses = await getExpenses(grp.id, { limit: 10000, includeSettled: false });
+    const targetWeekStart = arg || pickActiveTargetWeek(allExpenses).weekStart;
+    const label = getWeekRangeFromStart(targetWeekStart).label;
     await editOrSend(
       api,
       chatId,
       messageId,
-      '🔄 Guruhdagi barcha joriy hisob-kitoblarni (qarzlarni) nollaysizmi?',
+      `🔄 ${label} haftasidagi hisob-kitoblarni (qarzlarni) nollaysizmi?\n\n(Boshqa haftalardagi xarajatlar o'zgarishsiz qoladi.)`,
       {
         inline_keyboard: [
           [
-            { text: '✅ Ha, nollash', callback_data: 'adm:e_settle_ok' },
+            { text: '✅ Ha, nollash', callback_data: `adm:e_settle_ok:${targetWeekStart}` },
             { text: '❌ Bekor qilish', callback_data: 'adm:exps' },
           ],
         ],
@@ -1066,9 +1127,16 @@ export async function handleAdminCallback(api, callbackQuery) {
   }
 
   if (action === 'e_settle_ok') {
-    await settleGroup(grp.id);
+    const res = await settleGroup(grp.id, arg || null);
+    const label = res?.weekStart ? getWeekRangeFromStart(res.weekStart).label : 'Joriy hafta';
     const refreshed = await resolveAdminContext(api, userId, username);
-    await renderExpensesMenu(api, chatId, messageId, refreshed, '✅ Barcha hisob-kitoblar nollandi!');
+    await renderExpensesMenu(
+      api,
+      chatId,
+      messageId,
+      refreshed,
+      `✅ ${label} haftasi nollandi (${res?.settledCount || 0} ta xarajat arxivlandi).`
+    );
     await api.answerCallbackQuery({ callback_query_id: cbId, text: 'Nollandi!' });
     return;
   }

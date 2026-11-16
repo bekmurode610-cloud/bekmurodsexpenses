@@ -94,3 +94,22 @@ export const personalDebts = table('personal_debts', {
 }, (t) => ({
   personalDebtUserIdx: index('idx_personal_debts_user').on(t.userId),
 }));
+
+export const weeklyReports = table('weekly_reports', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  groupId: integer('group_id').notNull(),
+  weekStart: text('week_start').notNull(), // YYYY-MM-DD (Monday UZT)
+  weekEnd: text('week_end').notNull(),     // YYYY-MM-DD (Sunday UZT)
+  totalByCurrency: json('total_by_currency'),
+  expenseCount: integer('expense_count').default(0),
+  participantCount: integer('participant_count').default(0),
+  fairShareByCurrency: json('fair_share_by_currency'),
+  memberBreakdown: json('member_breakdown'),
+  transfers: json('transfers'),
+  reportText: text('report_text'),
+  isSettled: integer('is_settled').default(0),
+  settledAt: integer('settled_at', { mode: 'timestamp' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+}, (t) => ({
+  weeklyGroupWeekIdx: index('idx_weekly_reports_group_week').on(t.groupId, t.weekStart),
+}));

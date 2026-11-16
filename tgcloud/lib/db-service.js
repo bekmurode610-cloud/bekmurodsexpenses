@@ -1,5 +1,5 @@
 import { db } from 'sdk';
-import { eq, and, desc, gte, lte, asc } from 'sdk/db';
+import { eq, and, desc, gte, lte, asc, inArray } from 'sdk/db';
 import {
   groups,
   members,
@@ -9,6 +9,7 @@ import {
   adminSessions,
   personalRecords,
   personalDebts,
+  weeklyReports,
 } from '../schema.js';
 import {
   getUztTimeInfo,
@@ -22,6 +23,10 @@ import {
   calculateBalances,
   getPersonalSettings,
   buildPersonalReminderPayload,
+  getWeekRangeUzt,
+  groupExpensesByWeek,
+  pickActiveTargetWeek,
+  computeWeeklyReportSnapshot,
 } from './settlement.js';
 
 function normalizeName(str) {
@@ -91,6 +96,7 @@ export async function getAdminSession(userId) {
 export async function deleteGroupById(groupId) {
   await db.delete(members).where(eq(members.groupId, groupId)).run();
   await db.delete(expenses).where(eq(expenses.groupId, groupId)).run();
+  await db.delete(weeklyReports).where(eq(weeklyReports.groupId, groupId)).run();
   await db.delete(pendingDeletions).where(eq(pendingDeletions.chatId, groupId)).run();
   await db.delete(groups).where(eq(groups.id, groupId)).run();
 }
@@ -366,6 +372,7 @@ export async function addExpense({
     .returning()
     .run();
 
+  await syncGroupWeeklyReports(groupId);
   return inserted;
 }
 
@@ -379,7 +386,12 @@ export async function getExpenseByMessageId(groupId, messageId) {
 }
 
 export async function updateExpense(expenseId, updates) {
-  return await db.update(expenses).set(updates).where(eq(expenses.id, expenseId)).run();
+  const existing = await getExpense(expenseId);
+  const res = await db.update(expenses).set(updates).where(eq(expenses.id, expenseId)).run();
+  if (existing?.groupId) {
+    await syncGroupWeeklyReports(existing.groupId);
+  }
+  return res;
 }
 
 export async function getExpenses(
@@ -415,11 +427,141 @@ export async function getExpense(expenseId) {
 }
 
 export async function deleteExpense(expenseId) {
-  return await db.delete(expenses).where(eq(expenses.id, expenseId)).run();
+  const existing = await getExpense(expenseId);
+  const res = await db.delete(expenses).where(eq(expenses.id, expenseId)).run();
+  if (existing?.groupId) {
+    await syncGroupWeeklyReports(existing.groupId);
+  }
+  return res;
 }
 
-export async function settleGroup(groupId) {
-  return await db.update(expenses).set({ settled: 1 }).where(eq(expenses.groupId, groupId)).run();
+export async function getWeeklyReports(groupId, { limit = 24 } = {}) {
+  return await db
+    .select()
+    .from(weeklyReports)
+    .where(eq(weeklyReports.groupId, groupId))
+    .orderBy(desc(weeklyReports.weekStart))
+    .limit(limit)
+    .all();
+}
+
+export async function getWeeklyReportByWeek(groupId, weekStart) {
+  return await db
+    .select()
+    .from(weeklyReports)
+    .where(and(eq(weeklyReports.groupId, groupId), eq(weeklyReports.weekStart, weekStart)))
+    .get();
+}
+
+export async function syncGroupWeeklyReports(groupId) {
+  if (!groupId) return [];
+  const grp = await getGroup(groupId);
+  if (!grp) return [];
+
+  const mems = await getMembers(groupId);
+  const allExpenses = await getExpenses(groupId, { limit: 10000, includeSettled: true });
+  const existingRows = await getWeeklyReports(groupId, { limit: 200 });
+  const existingByWeek = new Map(existingRows.map((r) => [r.weekStart, r]));
+
+  const bucketsOldestFirst = groupExpensesByWeek(allExpenses).sort((a, b) =>
+    a.weekStart.localeCompare(b.weekStart)
+  );
+
+  let prevSnap = null;
+  // Also preserve chronological comparison against any archived week older than current expenses
+  const archivedSorted = [...existingRows].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  if (bucketsOldestFirst.length > 0 && archivedSorted.length > 0) {
+    const oldestExpWeek = bucketsOldestFirst[0].weekStart;
+    const olderArchived = archivedSorted.filter((r) => r.weekStart < oldestExpWeek && (r.expenseCount || 0) > 0);
+    if (olderArchived.length > 0) {
+      prevSnap = olderArchived[olderArchived.length - 1];
+    }
+  }
+
+  for (const bucket of bucketsOldestFirst) {
+    const snap = computeWeeklyReportSnapshot(
+      mems,
+      bucket.expenses,
+      grp,
+      bucket.weekStart,
+      bucket.weekEnd,
+      prevSnap
+    );
+
+    const existing = existingByWeek.get(bucket.weekStart);
+    const nowDate = new Date();
+    const settledVal = snap.isSettled ? 1 : 0;
+
+    if (existing) {
+      await db
+        .update(weeklyReports)
+        .set({
+          weekEnd: snap.weekEnd,
+          totalByCurrency: snap.totalByCurrency,
+          expenseCount: snap.expenseCount,
+          participantCount: snap.participantCount,
+          fairShareByCurrency: snap.fairShareByCurrency,
+          memberBreakdown: snap.memberBreakdown,
+          transfers: snap.transfers,
+          reportText: snap.reportText,
+          isSettled: settledVal,
+          settledAt: settledVal ? (existing.settledAt || nowDate) : null,
+          updatedAt: nowDate,
+        })
+        .where(eq(weeklyReports.id, existing.id))
+        .run();
+    } else {
+      await db
+        .insert(weeklyReports)
+        .values({
+          groupId,
+          weekStart: snap.weekStart,
+          weekEnd: snap.weekEnd,
+          totalByCurrency: snap.totalByCurrency,
+          expenseCount: snap.expenseCount,
+          participantCount: snap.participantCount,
+          fairShareByCurrency: snap.fairShareByCurrency,
+          memberBreakdown: snap.memberBreakdown,
+          transfers: snap.transfers,
+          reportText: snap.reportText,
+          isSettled: settledVal,
+          settledAt: settledVal ? nowDate : null,
+          updatedAt: nowDate,
+        })
+        .run();
+    }
+
+    if (snap.expenseCount > 0) {
+      prevSnap = snap;
+    }
+  }
+
+  return await getWeeklyReports(groupId, { limit: 24 });
+}
+
+export async function settleGroup(groupId, targetWeekStart = null) {
+  const unsettled = await getExpenses(groupId, { limit: 10000, includeSettled: false });
+  if (!unsettled || unsettled.length === 0) {
+    await syncGroupWeeklyReports(groupId);
+    return { settledCount: 0, weekStart: targetWeekStart };
+  }
+
+  const weekToSettle = targetWeekStart || pickActiveTargetWeek(unsettled).weekStart;
+  const ids = unsettled
+    .filter((exp) => getWeekRangeUzt(exp.createdAt).weekStart === weekToSettle)
+    .map((exp) => exp.id);
+
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    await db
+      .update(expenses)
+      .set({ settled: 1 })
+      .where(and(eq(expenses.groupId, groupId), inArray(expenses.id, chunk)))
+      .run();
+  }
+
+  await syncGroupWeeklyReports(groupId);
+  return { settledCount: ids.length, weekStart: weekToSettle };
 }
 
 export async function resetGroup(groupId) {
@@ -728,7 +870,9 @@ export async function getUserApartmentBalance(userId, username) {
     return { groupName: grp.groupName || 'Guruh', balance: 0, currency: 'UZS' };
   }
 
-  const balancesByCur = calculateBalances(mems, unsettled, grp);
+  const targetWeek = pickActiveTargetWeek(unsettled);
+  const weekExpenses = targetWeek.unsettledExpenses || unsettled;
+  const balancesByCur = calculateBalances(mems, weekExpenses, grp);
   const uzsBalances = balancesByCur.UZS || {};
 
   let totalBal = 0;

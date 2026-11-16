@@ -19,6 +19,7 @@ import {
   queueMessageDeletion,
   getAdminSession,
   setAdminSession,
+  syncGroupWeeklyReports,
 } from '../lib/db-service.js';
 import {
   calculateBalances,
@@ -32,6 +33,12 @@ import {
   getUztTimeInfo,
   getGroupSettings,
   buildDetailReportText,
+  pickActiveTargetWeek,
+  getWeekRangeUzt,
+  formatYmdShortUz,
+  formatWeeklyHistoryText,
+  buildWeekReportKeyboard,
+  buildWeeklyHistoryKeyboard,
 } from '../lib/settlement.js';
 import { isAllowed, isCreatorOrAdmin } from '../lib/auth.js';
 import { formatMoney, parseExpenseInput } from '../lib/format.js';
@@ -263,7 +270,8 @@ export default async function (message, ctx) {
         'Buyruqlar:\n' +
         '/expenses - Yaqindagi xarajatlar\n' +
         "/duty - Bugungi navbatchi\n" +
-        "/detail - To'liq hisobot\n" +
+        "/detail - Haftalik hisobot\n" +
+        '/weeks - Haftalik hisobotlar tarixi\n' +
         "/members - A'zolar ro'yxati";
 
       if (isAdmin) {
@@ -472,16 +480,37 @@ export default async function (message, ctx) {
       const groupMembers = await getMembers(chatId);
       const allExpenses = await getExpenses(chatId, { limit: 10000, includeSettled: true });
       const grp = await getGroup(chatId);
+      const savedReports = await syncGroupWeeklyReports(chatId);
+
+      const arg = (text.split(/\s+/)[1] || '').toLowerCase();
+      const targetWeekStart =
+        arg === 'current' || arg === 'joriy'
+          ? getUztTimeInfo().currentWeek.weekStart
+          : pickActiveTargetWeek(allExpenses).weekStart;
 
       await sendReply({
         chat_id: chatId,
-        text: buildDetailReportText(groupMembers, allExpenses, grp),
+        text: buildDetailReportText(groupMembers, allExpenses, grp, {
+          weekStart: targetWeekStart,
+          savedReports,
+        }),
+        reply_markup: buildWeekReportKeyboard(allExpenses, savedReports, targetWeekStart),
+      });
+      break;
+    }
+
+    case '/weeks': {
+      const savedReports = await syncGroupWeeklyReports(chatId);
+      await sendReply({
+        chat_id: chatId,
+        text: formatWeeklyHistoryText(savedReports),
+        reply_markup: buildWeeklyHistoryKeyboard(savedReports),
       });
       break;
     }
 
     case '/expenses': {
-      const recent = await getExpenses(chatId, { limit: 20, includeSettled: false });
+      const recent = await getExpenses(chatId, { limit: 30, includeSettled: false });
       const listToShow = recent.length > 0 ? recent : await getExpenses(chatId, { limit: 20, includeSettled: true });
 
       if (!listToShow || listToShow.length === 0) {
@@ -496,15 +525,22 @@ export default async function (message, ctx) {
       const memberMap = buildMemberNameMap(allMembers, listToShow);
 
       let resp = recent.length > 0 ? 'Yaqindagi xarajatlar:\n\n' : 'Nollangan xarajatlar:\n\n';
+      let lastWeekLabel = '';
       listToShow.forEach((exp, idx) => {
+        const wr = getWeekRangeUzt(exp.createdAt);
+        if (wr.label !== lastWeekLabel) {
+          resp += `${idx > 0 ? '\n' : ''}📅 ${wr.label}\n`;
+          lastWeekLabel = wr.label;
+        }
         const name = memberMap.get(Number(exp.payerId)) || exp.payerName;
-        resp += `${idx + 1}. ${name}: ${formatMoney(exp.amount, exp.currency)} - ${exp.description} (ID: ${exp.id})\n`;
+        const dateTag = formatYmdShortUz(wr.dateStr);
+        resp += `${idx + 1}. [${dateTag}] ${name}: ${formatMoney(exp.amount, exp.currency)} - ${exp.description} (ID: ${exp.id})\n`;
       });
       resp += "\nO'chirish: /delete <ID>";
 
       await sendReply({
         chat_id: chatId,
-        text: resp,
+        text: resp.trim(),
       });
       break;
     }
@@ -559,13 +595,24 @@ export default async function (message, ctx) {
     }
 
     case '/settle': {
+      const unsettled = await getExpenses(chatId, { limit: 10000, includeSettled: false });
+      if (!unsettled || unsettled.length === 0) {
+        await sendReply({
+          chat_id: chatId,
+          text: "Nollash uchun ochiq xarajatlar yo'q.",
+        });
+        break;
+      }
+      const target = pickActiveTargetWeek(unsettled);
       await sendReply({
         chat_id: chatId,
-        text: 'Barcha joriy hisob-kitoblarni nollaysizmi?',
+        text:
+          `${target.label} haftasidagi hisob-kitoblarni (${target.unsettledExpenses.length} ta xarajat) nollaysizmi?\n\n` +
+          `Boshqa haftalardagi xarajatlar alohida saqlanadi.`,
         reply_markup: {
           inline_keyboard: [
             [
-              { text: 'Tasdiqlash', callback_data: 'confirm_settle' },
+              { text: 'Tasdiqlash', callback_data: `confirm_settle:${target.weekStart}` },
               { text: 'Bekor qilish', callback_data: 'cancel_action' },
             ],
           ],

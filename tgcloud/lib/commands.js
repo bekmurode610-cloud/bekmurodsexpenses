@@ -3,7 +3,8 @@ import { getGroupSettings } from './settlement.js';
 export const USER_COMMANDS = [
   { command: 'expenses', description: 'Yaqindagi xarajatlar' },
   { command: 'duty', description: 'Bugungi navbatchi' },
-  { command: 'detail', description: "To'liq hisobot" },
+  { command: 'detail', description: 'Haftalik hisobot' },
+  { command: 'weeks', description: 'Haftalik hisobotlar tarixi' },
   { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'help', description: "Qo'llanma" },
 ];
@@ -11,12 +12,13 @@ export const USER_COMMANDS = [
 export const ADMIN_COMMANDS = [
   { command: 'expenses', description: "Yaqindagi xarajatlar" },
   { command: 'duty', description: "Bugungi navbatchi va boshqaruv" },
-  { command: 'detail', description: "To'liq hisobot" },
+  { command: 'detail', description: 'Haftalik hisobot' },
+  { command: 'weeks', description: 'Haftalik hisobotlar tarixi' },
   { command: 'members', description: "A'zolar ro'yxati" },
   { command: 'setmembers', description: "Xarajat a'zolarini belgilash" },
   { command: 'setduty', description: "Navbatchilarni kiritish" },
   { command: 'setdutytime', description: "Eslatma vaqtini sozlash (UZT)" },
-  { command: 'settle', description: "Qarzlarni nollash" },
+  { command: 'settle', description: "Hafta hisobini nollash" },
   { command: 'reset', description: "Xarajatlarni o'chirish" },
   { command: 'help', description: "Qo'llanma" },
 ];
