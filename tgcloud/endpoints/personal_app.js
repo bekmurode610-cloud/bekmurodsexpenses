@@ -11,8 +11,16 @@ import {
   addPersonalDebt,
   getPersonalDebts,
   getUserApartmentBalance,
+  syncPersonalDailyLogs,
 } from '../lib/db-service.js';
-import { getUztTimeInfo, formatUzDate, getPersonalSettings } from '../lib/settlement.js';
+import {
+  getUztTimeInfo,
+  formatUzDate,
+  formatYmdShortUz,
+  getPersonalSettings,
+  getUztDateKey,
+  getUztTimeHHMM,
+} from '../lib/settlement.js';
 import { parseExpenseInput } from '../lib/format.js';
 import {
   computePersonalStats,
@@ -39,6 +47,7 @@ async function buildAppState(user) {
   const ps = getPersonalSettings(session);
   const records = await getPersonalRecords(userId, { limit: 1000 });
   const stats = computePersonalStats(records);
+  const dailyLogsRows = await syncPersonalDailyLogs(userId);
   const debts = await getPersonalDebts(userId);
   const apt = await getUserApartmentBalance(userId, username);
   const { nowUzt } = getUztTimeInfo();
@@ -69,11 +78,32 @@ async function buildAppState(user) {
       monthSpentCardUzs: stats.monthSpentCardUzs,
       monthSpentCashUzs: stats.monthSpentCashUzs,
       todaySpentUzs: stats.todaySpentUzs,
+      todaySpentCardUzs: stats.todaySpentCardUzs,
+      todaySpentCashUzs: stats.todaySpentCashUzs,
+      todayIncomeUzs: stats.todayIncomeUzs,
+      todayIncomeCardUzs: stats.todayIncomeCardUzs,
+      todayIncomeCashUzs: stats.todayIncomeCashUzs,
+      todayNetUzs: stats.todayNetUzs,
       categories,
       otherCurrencies: Object.fromEntries(stats.otherCur.entries()),
     },
     settings: ps,
-    records: records.slice(0, 40).map((r) => ({
+    dailyLogs: dailyLogsRows.slice(0, 60).map((d) => ({
+      logDate: d.logDate,
+      dateLabel: formatYmdShortUz(d.logDate) || d.logDate,
+      incomeUzs: d.incomeUzs || 0,
+      incomeCardUzs: d.incomeCardUzs || 0,
+      incomeCashUzs: d.incomeCashUzs || 0,
+      spentUzs: d.spentUzs || 0,
+      spentCardUzs: d.spentCardUzs || 0,
+      spentCashUzs: d.spentCashUzs || 0,
+      netUzs: d.netUzs || 0,
+      closingBalanceUzs: d.closingBalanceUzs || 0,
+      recordCount: d.recordCount || 0,
+      topCategory: d.topCategory || '',
+      categories: d.categories && typeof d.categories === 'object' ? d.categories : {},
+    })),
+    records: records.slice(0, 120).map((r) => ({
       id: r.id,
       type: r.type,
       paymentMethod: r.paymentMethod === 'cash' ? 'cash' : 'card',
@@ -82,6 +112,8 @@ async function buildAppState(user) {
       category: r.category,
       description: r.description,
       createdAt: r.createdAt,
+      dateStr: getUztDateKey(r.createdAt),
+      timeStr: getUztTimeHHMM(r.createdAt),
     })),
     debts: debts.map((d) => ({
       id: d.id,
@@ -344,6 +376,19 @@ export default async function (input, ctx) {
       }
       patch.reminderTime = t;
       patch.lastReminderDate = null;
+    }
+    if (input.dailySummaryEnabled !== undefined) {
+      patch.dailySummaryEnabled = Boolean(input.dailySummaryEnabled);
+    }
+    if (input.dailySummaryTime !== undefined) {
+      const t = String(input.dailySummaryTime).trim();
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) {
+        throw new EndpointError('Vaqtni HH:MM formatida kiriting (masalan: 22:00)', {
+          code: 'INVALID_TIME',
+        });
+      }
+      patch.dailySummaryTime = t;
+      patch.lastDailySummaryDate = null;
     }
     await updatePersonalSettings(userId, patch);
     return await buildAppState(user);

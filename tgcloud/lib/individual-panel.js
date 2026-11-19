@@ -14,6 +14,8 @@ import {
   getUserApartmentBalance,
   touchMessageDeletion,
   cancelMessageDeletion,
+  getPersonalDailyLogs,
+  syncPersonalDailyLogs,
 } from './db-service.js';
 import {
   escapeHtml,
@@ -23,6 +25,8 @@ import {
   formatYmdShortUz,
   getPersonalSettings,
   buildPersonalReminderPayload,
+  getUztDateKey,
+  getUztTimeHHMM,
 } from './settlement.js';
 import { formatMoney, parseExpenseInput } from './format.js';
 
@@ -147,6 +151,11 @@ export function computePersonalStats(records) {
   let monthIncomeCardUzs = 0;
   let monthIncomeCashUzs = 0;
   let todaySpentUzs = 0;
+  let todaySpentCardUzs = 0;
+  let todaySpentCashUzs = 0;
+  let todayIncomeUzs = 0;
+  let todayIncomeCardUzs = 0;
+  let todayIncomeCashUzs = 0;
   const monthByCat = new Map();
   const otherCur = new Map();
 
@@ -163,19 +172,24 @@ export function computePersonalStats(records) {
         if (method === 'cash') {
           cashBalanceUzs += r.amount;
           if (inMonth) monthIncomeCashUzs += r.amount;
+          if (inToday) todayIncomeCashUzs += r.amount;
         } else {
           cardBalanceUzs += r.amount;
           if (inMonth) monthIncomeCardUzs += r.amount;
+          if (inToday) todayIncomeCardUzs += r.amount;
         }
         if (inMonth) monthIncomeUzs += r.amount;
+        if (inToday) todayIncomeUzs += r.amount;
       } else {
         walletUzs -= r.amount;
         if (method === 'cash') {
           cashBalanceUzs -= r.amount;
           if (inMonth) monthSpentCashUzs += r.amount;
+          if (inToday) todaySpentCashUzs += r.amount;
         } else {
           cardBalanceUzs -= r.amount;
           if (inMonth) monthSpentCardUzs += r.amount;
+          if (inToday) todaySpentCardUzs += r.amount;
         }
         if (inMonth) {
           monthSpentUzs += r.amount;
@@ -189,6 +203,8 @@ export function computePersonalStats(records) {
     }
   }
 
+  const todayNetUzs = Math.round((todayIncomeUzs - todaySpentUzs) * 10) / 10;
+
   return {
     walletUzs,
     cardBalanceUzs,
@@ -200,6 +216,12 @@ export function computePersonalStats(records) {
     monthIncomeCardUzs,
     monthIncomeCashUzs,
     todaySpentUzs,
+    todaySpentCardUzs,
+    todaySpentCashUzs,
+    todayIncomeUzs,
+    todayIncomeCardUzs,
+    todayIncomeCashUzs,
+    todayNetUzs,
     monthByCat,
     otherCur,
   };
@@ -211,6 +233,12 @@ export function formatPersonalHomeText({ stats, ps, apt, dateLabel, notice = '' 
   text += `<b>Hamyon</b> · <b>${formatMoney(stats.walletUzs, 'UZS')}</b>\n`;
   text += `<blockquote>Karta — <b>${formatMoney(stats.cardBalanceUzs, 'UZS')}</b>\nNaqd — <b>${formatMoney(stats.cashBalanceUzs, 'UZS')}</b></blockquote>\n\n`;
 
+  const todayNetSign = stats.todayNetUzs > 0 ? '+' : '';
+  text += `<b>Bugun</b>\n`;
+  text += `<blockquote>Kirim — <b>+${formatMoney(stats.todayIncomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(stats.todayIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.todayIncomeCashUzs, 'UZS')})</i>\n`;
+  text += `Chiqim — <b>-${formatMoney(stats.todaySpentUzs, 'UZS')}</b> <i>(Karta: -${formatMoney(stats.todaySpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.todaySpentCashUzs, 'UZS')})</i>\n`;
+  text += `Farq — <b>${todayNetSign}${formatMoney(stats.todayNetUzs, 'UZS')}</b></blockquote>\n\n`;
+
   text += `<b>Shu oy</b>\n`;
   text += `<blockquote>Kirim — <b>+${formatMoney(stats.monthIncomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})</i>\n`;
   text += `Chiqim — <b>-${formatMoney(stats.monthSpentUzs, 'UZS')}</b></blockquote>`;
@@ -219,10 +247,8 @@ export function formatPersonalHomeText({ stats, ps, apt, dateLabel, notice = '' 
   if (ps.dailyLimit > 0) {
     const rem = ps.dailyLimit - stats.todaySpentUzs;
     extraLines.push(
-      `Bugun — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b> / ${formatMoney(ps.dailyLimit, 'UZS')} <i>(qoldiq: ${formatMoney(rem, 'UZS')})</i>`
+      `Bugungi limit — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b> / ${formatMoney(ps.dailyLimit, 'UZS')} <i>(qoldiq: ${formatMoney(rem, 'UZS')})</i>`
     );
-  } else if (stats.todaySpentUzs > 0) {
-    extraLines.push(`Bugungi chiqim — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b>`);
   }
 
   if (ps.monthlyLimit > 0) {
@@ -275,15 +301,19 @@ export async function renderIndividualHome(api, chatId, messageId, userId, usern
       { text: '+ Kirim (Naqd)', callback_data: 'ind:inc_cash' },
     ],
     [
+      { text: 'Kunlik loglar', callback_data: 'ind:dlogs' },
       { text: 'Hisobot', callback_data: 'ind:report' },
+    ],
+    [
       { text: 'Yozuvlar', callback_data: 'ind:records' },
-    ],
-    [
       { text: 'Qarz daftari', callback_data: 'ind:debts' },
-      { text: 'Kunlik vazifalar', callback_data: 'ind:tasks' },
     ],
     [
+      { text: 'Kunlik vazifalar', callback_data: 'ind:tasks' },
       { text: 'Limitlar', callback_data: 'ind:limits' },
+    ],
+    [
+      { text: 'Kunlik yakun', callback_data: 'ind:dsum' },
       { text: '⇄ Guruh', callback_data: 'adm:home' },
     ],
   ];
@@ -299,10 +329,15 @@ export function formatPersonalReportText(records, dateLabel, notice = '') {
   text += `<b>Joriy hamyon</b> · <b>${formatMoney(stats.walletUzs, 'UZS')}</b>\n`;
   text += `<blockquote>Karta — <b>${formatMoney(stats.cardBalanceUzs, 'UZS')}</b>\nNaqd — <b>${formatMoney(stats.cashBalanceUzs, 'UZS')}</b></blockquote>\n\n`;
 
+  const todayNetSign = stats.todayNetUzs > 0 ? '+' : '';
+  text += `<b>Bugun</b>\n`;
+  text += `<blockquote>Kirim — <b>+${formatMoney(stats.todayIncomeUzs, 'UZS')}</b>\n`;
+  text += `Chiqim — <b>-${formatMoney(stats.todaySpentUzs, 'UZS')}</b>\n`;
+  text += `Farq — <b>${todayNetSign}${formatMoney(stats.todayNetUzs, 'UZS')}</b></blockquote>\n\n`;
+
   text += `<b>Shu oydagi oqim</b>\n`;
   text += `<blockquote>Kirim — <b>+${formatMoney(stats.monthIncomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(stats.monthIncomeCardUzs, 'UZS')} · Naqd: +${formatMoney(stats.monthIncomeCashUzs, 'UZS')})</i>\n`;
-  text += `Chiqim — <b>-${formatMoney(stats.monthSpentUzs, 'UZS')}</b> <i>(Karta: -${formatMoney(stats.monthSpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.monthSpentCashUzs, 'UZS')})</i>\n`;
-  text += `Bugungi chiqim — <b>${formatMoney(stats.todaySpentUzs, 'UZS')}</b></blockquote>`;
+  text += `Chiqim — <b>-${formatMoney(stats.monthSpentUzs, 'UZS')}</b> <i>(Karta: -${formatMoney(stats.monthSpentCardUzs, 'UZS')} · Naqd: -${formatMoney(stats.monthSpentCashUzs, 'UZS')})</i></blockquote>`;
 
   if (stats.otherCur.size > 0) {
     const curLines = [];
@@ -469,7 +504,10 @@ async function renderReport(api, chatId, messageId, userId, notice = '', viewMod
       },
     ],
     [
+      { text: 'Kunlik loglar', callback_data: 'ind:dlogs' },
       { text: 'Yozuvlar', callback_data: 'ind:records' },
+    ],
+    [
       { text: 'Tozalash', callback_data: 'ind:r_clear' },
     ],
     [
@@ -736,6 +774,147 @@ async function renderLimits(api, chatId, messageId, userId, notice = '') {
   await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
 }
 
+export function formatPersonalDailyLogsText(logs = [], notice = '') {
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Kunlik loglar</b> <i>(so'nggi ${Math.min(logs.length, 14)} kun)</i>\n\n`;
+
+  if (!logs || logs.length === 0) {
+    text += `<i>Hozircha kunlik loglar yo'q.</i>`;
+    return text.trim();
+  }
+
+  const list = logs.slice(0, 14);
+  const lines = [];
+  for (const l of list) {
+    const sign = l.netUzs > 0 ? '+' : '';
+    const dayLabel = formatYmdShortUz(l.logDate) || l.logDate;
+    const catNote = l.topCategory ? ` · ${escapeHtml(l.topCategory)}` : '';
+    lines.push(
+      `<b>${escapeHtml(dayLabel)}</b> · Farq <b>${sign}${formatMoney(l.netUzs, 'UZS')}</b> <i>(${l.recordCount || 0} ta${catNote})</i>\n  Kirim +${formatMoney(l.incomeUzs, 'UZS')} · Chiqim -${formatMoney(l.spentUzs, 'UZS')} · Qoldiq ${formatMoney(l.closingBalanceUzs, 'UZS')}`
+    );
+  }
+
+  text += `<blockquote>${lines.join('\n\n')}</blockquote>\n\n<i>Batafsil ko'rish uchun kun tugmasini bosing.</i>`;
+  return text.trim();
+}
+
+async function renderDailyLogs(api, chatId, messageId, userId, notice = '') {
+  const logs = await syncPersonalDailyLogs(userId);
+  const text = formatPersonalDailyLogsText(logs, notice);
+
+  const rows = [];
+  const topDays = logs.slice(0, 8);
+  for (let i = 0; i < topDays.length; i += 2) {
+    const pair = topDays.slice(i, i + 2).map((l) => ({
+      text: formatYmdShortUz(l.logDate) || l.logDate,
+      callback_data: `ind:dlog:${l.logDate}`,
+    }));
+    rows.push(pair);
+  }
+  rows.push([{ text: 'Kunlik yakun sozlamasi', callback_data: 'ind:dsum' }]);
+  rows.push([{ text: '← Kabinetga', callback_data: 'ind:home' }]);
+
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+}
+
+async function renderDailyLogDetail(api, chatId, messageId, userId, logDate) {
+  const logs = await syncPersonalDailyLogs(userId);
+  const idx = logs.findIndex((l) => l.logDate === logDate);
+  if (idx === -1) {
+    await renderDailyLogs(api, chatId, messageId, userId, 'Kunlik log topilmadi.');
+    return;
+  }
+
+  const log = logs[idx];
+  const records = await getPersonalRecords(userId, { limit: 1000 });
+  const dayRecords = records
+    .filter((r) => getUztDateKey(r.createdAt) === logDate)
+    .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt) || (b.id || 0) - (a.id || 0));
+
+  const dayLabel = formatYmdShortUz(log.logDate) || log.logDate;
+  const netSign = log.netUzs > 0 ? '+' : '';
+
+  let text = `<b>Kunlik log</b> · ${escapeHtml(dayLabel)} <i>(${escapeHtml(log.logDate)})</i>\n\n`;
+
+  const flowLines = [
+    `Kirim — <b>+${formatMoney(log.incomeUzs, 'UZS')}</b> <i>(Karta: +${formatMoney(log.incomeCardUzs, 'UZS')} · Naqd: +${formatMoney(log.incomeCashUzs, 'UZS')})</i>`,
+    `Chiqim — <b>-${formatMoney(log.spentUzs, 'UZS')}</b> <i>(Karta: -${formatMoney(log.spentCardUzs, 'UZS')} · Naqd: -${formatMoney(log.spentCashUzs, 'UZS')})</i>`,
+    `Kunlik farq — <b>${netSign}${formatMoney(log.netUzs, 'UZS')}</b> <i>(${log.recordCount} ta yozuv)</i>`,
+    `Kun yakuni hamyon — <b>${formatMoney(log.closingBalanceUzs, 'UZS')}</b>`,
+  ];
+  text += `<b>Holat</b>\n<blockquote>${flowLines.join('\n')}</blockquote>\n\n`;
+
+  const catObj = log.categories && typeof log.categories === 'object' ? log.categories : {};
+  const catEntries = Object.entries(catObj);
+  if (catEntries.length > 0) {
+    const catLines = catEntries.map(
+      ([cat, amt]) => `${escapeHtml(cat)} — <b>${formatMoney(amt, 'UZS')}</b>`
+    );
+    text += `<b>Bo'limlar</b>\n<blockquote>${catLines.join('\n')}</blockquote>\n\n`;
+  }
+
+  text += `<b>Yozuvlar</b>\n`;
+  if (dayRecords.length > 0) {
+    const recLines = [];
+    for (const r of dayRecords) {
+      const hhmm = getUztTimeHHMM(r.createdAt);
+      const pm = methodLabel(r.paymentMethod);
+      const sign = r.type === 'income' ? '+' : '-';
+      recLines.push(
+        `<code>${hhmm}</code> · ${pm} · <b>${sign}${formatMoney(r.amount, r.currency)}</b> — ${escapeHtml(r.description)}`
+      );
+    }
+    text += `<blockquote>${recLines.join('\n')}</blockquote>`;
+  } else {
+    text += `<blockquote><i>Arxivlangan kun (xom yozuvlar tozalangan).</i></blockquote>`;
+  }
+
+  const rows = [];
+  const navRow = [];
+  if (idx < logs.length - 1) {
+    const older = logs[idx + 1];
+    navRow.push({ text: `← ${formatYmdShortUz(older.logDate)}`, callback_data: `ind:dlog:${older.logDate}` });
+  }
+  if (idx > 0) {
+    const newer = logs[idx - 1];
+    navRow.push({ text: `${formatYmdShortUz(newer.logDate)} →`, callback_data: `ind:dlog:${newer.logDate}` });
+  }
+  if (navRow.length > 0) rows.push(navRow);
+  rows.push([
+    { text: '← Kunlik loglar', callback_data: 'ind:dlogs' },
+    { text: '← Kabinetga', callback_data: 'ind:home' },
+  ]);
+
+  await editOrSend(api, chatId, messageId, text.trim(), { inline_keyboard: rows });
+}
+
+async function renderDailySummarySettings(api, chatId, messageId, userId, notice = '') {
+  const session = await getAdminSession(userId);
+  const ps = getPersonalSettings(session);
+  const statusText = ps.dailySummaryEnabled ? 'Yoqilgan' : "O'chirilgan";
+
+  let text = notice ? `<i>${escapeHtml(notice)}</i>\n\n` : '';
+  text += `<b>Kunlik yakun hisoboti</b>\n\n`;
+  text += `<blockquote>Holat — <b>${statusText}</b>\nVaqt — <b>${escapeHtml(ps.dailySummaryTime)} (UZT)</b></blockquote>\n\n`;
+  text += `<i>Har kuni kechqurun belgilangan vaqtda bot sizga bugungi kirim, chiqim, farq va hamyon holatini xulosa qilib yuboradi.</i>`;
+
+  const presets = ['20:00', '21:00', '22:00', '23:00'];
+  const rows = [
+    [{ text: `Hisobot: ${statusText}`, callback_data: 'ind:dsum_tg' }],
+    presets.map((t) => ({
+      text: ps.dailySummaryTime === t ? `• ${t}` : t,
+      callback_data: `ind:dsum_tm:${t}`,
+    })),
+    [
+      { text: 'Boshqa vaqt', callback_data: 'ind:dsum_tmc' },
+      { text: '← Kunlik loglar', callback_data: 'ind:dlogs' },
+    ],
+    [{ text: '← Kabinetga', callback_data: 'ind:home' }],
+  ];
+
+  await editOrSend(api, chatId, messageId, text, { inline_keyboard: rows });
+}
+
 function parseDebtInput(rawText) {
   const parsed = parseExpenseInput(rawText);
   if (!parsed) return null;
@@ -916,6 +1095,25 @@ export async function handleIndividualMessage(api, message) {
       return;
     }
 
+    if (mode === 'ind_set_dsum_time') {
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(text)) {
+        await setAdminSession(userId, { awaitingInput: 'ind_set_dsum_time' });
+        await api.sendMessage({
+          chat_id: chatId,
+          text: "Vaqtni HH:MM formatida yuboring (masalan: 22:00):",
+          reply_markup: getBackKeyboard('ind:dsum'),
+        });
+        return;
+      }
+      await updatePersonalSettings(userId, {
+        dailySummaryTime: text,
+        dailySummaryEnabled: true,
+        lastDailySummaryDate: null,
+      });
+      await renderDailySummarySettings(api, chatId, null, userId, `Kunlik yakun vaqti: ${text}`);
+      return;
+    }
+
     if (mode === 'ind_inc_card' || mode === 'ind_inc_cash') {
       const cleanInput = text.replace(/^[+*]+/, '').trim();
       const parsed = parseExpenseInput(cleanInput);
@@ -966,6 +1164,11 @@ export async function handleIndividualMessage(api, message) {
       await renderLimits(api, chatId, null, userId, 'Limit saqlandi.');
       return;
     }
+  }
+
+  if (text.startsWith('/kunlik') || text.startsWith('/logs')) {
+    await renderDailyLogs(api, chatId, null, userId);
+    return;
   }
 
   // Instant expense or income logging
@@ -1096,6 +1299,59 @@ export async function handleIndividualCallback(api, callbackQuery) {
 
   if (action === 'records') {
     await renderRecords(api, chatId, messageId, userId);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dlogs') {
+    await renderDailyLogs(api, chatId, messageId, userId);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dlog') {
+    await renderDailyLogDetail(api, chatId, messageId, userId, arg);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dsum') {
+    await renderDailySummarySettings(api, chatId, messageId, userId);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dsum_tg') {
+    const session = await getAdminSession(userId);
+    const ps = getPersonalSettings(session);
+    await updatePersonalSettings(userId, { dailySummaryEnabled: !ps.dailySummaryEnabled });
+    await renderDailySummarySettings(api, chatId, messageId, userId);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dsum_tm') {
+    if (/^([01]\d|2[0-3]):[0-5]\d$/.test(arg)) {
+      await updatePersonalSettings(userId, {
+        dailySummaryTime: arg,
+        dailySummaryEnabled: true,
+        lastDailySummaryDate: null,
+      });
+    }
+    await renderDailySummarySettings(api, chatId, messageId, userId);
+    await api.answerCallbackQuery({ callback_query_id: cbId });
+    return;
+  }
+
+  if (action === 'dsum_tmc') {
+    await setAdminSession(userId, { mode: 'individual', awaitingInput: 'ind_set_dsum_time' });
+    await editOrSend(
+      api,
+      chatId,
+      messageId,
+      "Vaqtni HH:MM formatida yozing (masalan: 22:00):",
+      getBackKeyboard('ind:dsum')
+    );
     await api.answerCallbackQuery({ callback_query_id: cbId });
     return;
   }

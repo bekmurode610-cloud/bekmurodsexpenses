@@ -3,6 +3,8 @@
 
   const state = {
     activeTab: 'wallet',
+    ledgerView: 'daily',
+    expandedDayDate: null,
     recordType: 'expense',
     paymentMethod: 'card',
     debtDirection: 'owe_me',
@@ -223,6 +225,70 @@
     if (dateEl) dateEl.textContent = state.data.dateLabel || '';
   }
 
+  function createRecordRow(rec, showDate) {
+    const row = el('div', 'ledger-row');
+    const main = el('div', 'row-main');
+    main.appendChild(el('div', 'row-title', rec.description));
+
+    const metaParts = [];
+    if (rec.category) metaParts.push(rec.category);
+    if (showDate && rec.dateStr) {
+      metaParts.push(rec.dateStr.slice(5));
+    }
+    if (rec.timeStr) metaParts.push(rec.timeStr);
+    main.appendChild(el('div', 'row-sub', metaParts.join(' · ')));
+
+    const actions = el('div', 'row-actions');
+    const methodBtn = el(
+      'button',
+      'method-toggle',
+      rec.paymentMethod === 'cash' ? 'Naqd' : 'Karta'
+    );
+    methodBtn.type = 'button';
+    methodBtn.title = "Karta va Naqd o'rtasida almashtirish";
+    methodBtn.addEventListener('click', () => {
+      haptic('light');
+      runAction({ action: 'toggle_method', recordId: rec.id }, 'Yangilanmoqda...');
+    });
+
+    const isInc = rec.type === 'income';
+    const amtEl = el(
+      'span',
+      'row-amount' + (isInc ? ' is-income' : ''),
+      (isInc ? '+' : '-') + formatMoney(rec.amount, rec.currency)
+    );
+
+    const delBtn = el('button', 'icon-btn', '×');
+    delBtn.type = 'button';
+    delBtn.setAttribute('aria-label', "Yozuvni o'chirish");
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      haptic('light');
+      const methodText = rec.paymentMethod === 'cash' ? 'Naqd' : 'Karta';
+      const amountText = (isInc ? '+' : '-') + formatMoney(rec.amount, rec.currency);
+      const itemLabel = rec.description + ' (' + amountText + ', ' + methodText + ')';
+      openConfirmDialog({
+        twoStep: true,
+        title1: "Yozuvni o'chirasizmi? (1/2)",
+        desc1: itemLabel,
+        confirmLabel1: "Ha, o'chirish (1/2)",
+        title2: "Aniq o'chirasizmi? (2/2)",
+        desc2: itemLabel + " butunlay o'chiriladi. Ortga qaytarib bo'lmaydi.",
+        confirmLabel2: "Butunlay o'chirish",
+        onConfirm: () => {
+          runAction({ action: 'delete_record', recordId: rec.id }, "O'chirilmoqda...", "Yozuv o'chirildi");
+        },
+      });
+    });
+
+    actions.appendChild(methodBtn);
+    actions.appendChild(amtEl);
+    actions.appendChild(delBtn);
+    row.appendChild(main);
+    row.appendChild(actions);
+    return row;
+  }
+
   function renderWallet() {
     if (!state.data) return;
     const stats = state.data.stats;
@@ -238,6 +304,29 @@
     document.getElementById('cashTotal').textContent = formatMoney(stats.cashBalanceUzs, 'UZS');
     document.getElementById('cashMonthly').textContent =
       'Oylik kirim: +' + formatMoney(stats.monthIncomeCashUzs, 'UZS');
+
+    const todayInc = stats.todayIncomeUzs || 0;
+    const todaySp = stats.todaySpentUzs || 0;
+    const todayNet = stats.todayNetUzs !== undefined ? stats.todayNetUzs : Math.round((todayInc - todaySp) * 10) / 10;
+
+    const tIncEl = document.getElementById('todayIncome');
+    if (tIncEl) {
+      tIncEl.textContent = '+' + formatMoney(todayInc, 'UZS');
+      tIncEl.classList.toggle('is-income', todayInc > 0);
+    }
+
+    const tSpEl = document.getElementById('todaySpent');
+    if (tSpEl) {
+      tSpEl.textContent = (todaySp > 0 ? '-' : '') + formatMoney(todaySp, 'UZS');
+    }
+
+    const tNetEl = document.getElementById('todayNet');
+    if (tNetEl) {
+      const netSign = todayNet > 0 ? '+' : '';
+      tNetEl.textContent = netSign + formatMoney(todayNet, 'UZS');
+      tNetEl.classList.toggle('is-income', todayNet > 0);
+      tNetEl.classList.toggle('is-negative', todayNet < 0);
+    }
 
     const aptRow = document.getElementById('apartmentRow');
     const aptBal = document.getElementById('apartmentBalance');
@@ -281,71 +370,126 @@
     }
 
     const records = state.data.records || [];
-    document.getElementById('recordsCount').textContent = records.length + ' ta';
-    const recContainer = document.getElementById('recordsList');
-    recContainer.innerHTML = '';
-
-    if (records.length === 0) {
-      recContainer.appendChild(el('div', 'empty-note', "Hozircha yozuvlar yo'q."));
-      return;
+    const headingEl = document.getElementById('ledgerHeading');
+    if (headingEl) {
+      headingEl.textContent = state.ledgerView === 'daily' ? 'Kunlik loglar' : "So'nggi yozuvlar";
     }
 
-    records.forEach((rec) => {
-      const row = el('div', 'ledger-row');
-      const main = el('div', 'row-main');
-      main.appendChild(el('div', 'row-title', rec.description));
-      main.appendChild(el('div', 'row-sub', rec.category));
-
-      const actions = el('div', 'row-actions');
-      const methodBtn = el(
-        'button',
-        'method-toggle',
-        rec.paymentMethod === 'cash' ? 'Naqd' : 'Karta'
-      );
-      methodBtn.type = 'button';
-      methodBtn.title = "Karta va Naqd o'rtasida almashtirish";
-      methodBtn.addEventListener('click', () => {
-        haptic('light');
-        runAction({ action: 'toggle_method', recordId: rec.id }, 'Yangilanmoqda...');
-      });
-
-      const isInc = rec.type === 'income';
-      const amtEl = el(
-        'span',
-        'row-amount' + (isInc ? ' is-income' : ''),
-        (isInc ? '+' : '-') + formatMoney(rec.amount, rec.currency)
-      );
-
-      const delBtn = el('button', 'icon-btn', '×');
-      delBtn.type = 'button';
-      delBtn.setAttribute('aria-label', "Yozuvni o'chirish");
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        haptic('light');
-        const methodText = rec.paymentMethod === 'cash' ? 'Naqd' : 'Karta';
-        const amountText = (isInc ? '+' : '-') + formatMoney(rec.amount, rec.currency);
-        const itemLabel = rec.description + ' (' + amountText + ', ' + methodText + ')';
-        openConfirmDialog({
-          twoStep: true,
-          title1: "Yozuvni o'chirasizmi? (1/2)",
-          desc1: itemLabel,
-          confirmLabel1: "Ha, o'chirish (1/2)",
-          title2: "Aniq o'chirasizmi? (2/2)",
-          desc2: itemLabel + " butunlay o'chiriladi. Ortga qaytarib bo'lmaydi.",
-          confirmLabel2: "Butunlay o'chirish",
-          onConfirm: () => {
-            runAction({ action: 'delete_record', recordId: rec.id }, "O'chirilmoqda...", "Yozuv o'chirildi");
-          },
-        });
-      });
-
-      actions.appendChild(methodBtn);
-      actions.appendChild(amtEl);
-      actions.appendChild(delBtn);
-      row.appendChild(main);
-      row.appendChild(actions);
-      recContainer.appendChild(row);
+    document.querySelectorAll('.pair-btn[data-ledger-view]').forEach((b) => {
+      b.classList.toggle('is-active', b.getAttribute('data-ledger-view') === state.ledgerView);
     });
+
+    const dailyListEl = document.getElementById('dailyLogsList');
+    const recContainer = document.getElementById('recordsList');
+    if (dailyListEl) dailyListEl.hidden = state.ledgerView !== 'daily';
+    if (recContainer) recContainer.hidden = state.ledgerView !== 'records';
+
+    // 1. Render Daily Logs
+    if (dailyListEl) {
+      dailyListEl.innerHTML = '';
+      const dailyLogs = state.data.dailyLogs || [];
+      if (dailyLogs.length === 0) {
+        dailyListEl.appendChild(el('div', 'empty-note', "Hozircha kunlik loglar yo'q."));
+      } else {
+        const recordsByDate = new Map();
+        for (const r of records) {
+          const dk = r.dateStr;
+          if (!dk) continue;
+          if (!recordsByDate.has(dk)) recordsByDate.set(dk, []);
+          recordsByDate.get(dk).push(r);
+        }
+
+        dailyLogs.forEach((d) => {
+          const isOpen = state.expandedDayDate === d.logDate;
+          const item = el('div', 'day-log-item' + (isOpen ? ' is-open' : ''));
+
+          const toggleBtn = el('button', 'day-log-toggle');
+          toggleBtn.type = 'button';
+          toggleBtn.setAttribute('aria-expanded', String(isOpen));
+
+          const left = el('div', 'day-log-left');
+          left.appendChild(el('div', 'day-log-date', d.dateLabel || d.logDate));
+          const flowStr = '+' + formatMoney(d.incomeUzs, 'UZS') + ' · -' + formatMoney(d.spentUzs, 'UZS');
+          left.appendChild(el('div', 'day-log-meta', flowStr));
+          const catMeta = d.topCategory ? ' · ' + d.topCategory : '';
+          left.appendChild(el('div', 'day-log-meta', (d.recordCount || 0) + ' ta yozuv' + catMeta));
+
+          const right = el('div', 'day-log-right');
+          const numbers = el('div', 'day-log-numbers');
+          const netSign = d.netUzs > 0 ? '+' : '';
+          const netEl = el(
+            'div',
+            'day-log-net' + (d.netUzs > 0 ? ' is-positive' : d.netUzs < 0 ? ' is-negative' : ''),
+            netSign + formatMoney(d.netUzs, 'UZS')
+          );
+          const balEl = el('div', 'day-log-balance', 'Qoldiq: ' + formatMoney(d.closingBalanceUzs, 'UZS'));
+          numbers.appendChild(netEl);
+          numbers.appendChild(balEl);
+
+          const chevron = el('span', 'day-chevron', '›');
+          right.appendChild(numbers);
+          right.appendChild(chevron);
+
+          toggleBtn.appendChild(left);
+          toggleBtn.appendChild(right);
+
+          toggleBtn.addEventListener('click', () => {
+            haptic('light');
+            state.expandedDayDate = isOpen ? null : d.logDate;
+            renderWallet();
+          });
+
+          item.appendChild(toggleBtn);
+
+          if (isOpen) {
+            const detail = el('div', 'day-log-detail');
+            const splitBar = el('div', 'day-log-split');
+            splitBar.appendChild(
+              el(
+                'span',
+                null,
+                'Karta: +' + formatMoney(d.incomeCardUzs, 'UZS') + ' / -' + formatMoney(d.spentCardUzs, 'UZS')
+              )
+            );
+            splitBar.appendChild(
+              el(
+                'span',
+                null,
+                'Naqd: +' + formatMoney(d.incomeCashUzs, 'UZS') + ' / -' + formatMoney(d.spentCashUzs, 'UZS')
+              )
+            );
+            detail.appendChild(splitBar);
+
+            const dayRecs = recordsByDate.get(d.logDate) || [];
+            if (dayRecs.length > 0) {
+              const recList = el('div', 'day-log-records');
+              dayRecs.forEach((r) => recList.appendChild(createRecordRow(r, false)));
+              detail.appendChild(recList);
+            } else {
+              detail.appendChild(
+                el('div', 'empty-note', "Arxivlangan kun (xom yozuvlar saqlanmagan).")
+              );
+            }
+
+            item.appendChild(detail);
+          }
+
+          dailyListEl.appendChild(item);
+        });
+      }
+    }
+
+    // 2. Render Records
+    if (recContainer) {
+      recContainer.innerHTML = '';
+      if (records.length === 0) {
+        recContainer.appendChild(el('div', 'empty-note', "Hozircha yozuvlar yo'q."));
+      } else {
+        records.forEach((rec) => {
+          recContainer.appendChild(createRecordRow(rec, true));
+        });
+      }
+    }
   }
 
   function renderDebts() {
@@ -503,6 +647,17 @@
     if (document.activeElement !== mInput) {
       mInput.value = mLimit > 0 ? mLimit + ' ming' : '';
     }
+
+    const dsumBtn = document.getElementById('dailySummaryToggleBtn');
+    const dsumInput = document.getElementById('dailySummaryTimeInput');
+    if (dsumBtn) {
+      const sumEnabled = Boolean(ps.dailySummaryEnabled);
+      dsumBtn.setAttribute('aria-pressed', String(sumEnabled));
+      dsumBtn.textContent = sumEnabled ? 'Yoqilgan' : "O'chirilgan";
+    }
+    if (dsumInput && document.activeElement !== dsumInput) {
+      dsumInput.value = ps.dailySummaryTime || '22:00';
+    }
   }
 
   function renderAll() {
@@ -549,6 +704,10 @@
 
     bindSegmentedGroup('data-type', (v) => {
       state.recordType = v;
+    });
+    bindSegmentedGroup('data-ledger-view', (v) => {
+      state.ledgerView = v;
+      renderWallet();
     });
     bindSegmentedGroup('data-method', (v) => {
       state.paymentMethod = v;
@@ -701,6 +860,34 @@
         'Eslatma vaqti saqlandi'
       );
     });
+
+    const dsumToggle = document.getElementById('dailySummaryToggleBtn');
+    if (dsumToggle) {
+      dsumToggle.addEventListener('click', () => {
+        if (!state.data) return;
+        haptic('light');
+        const current = Boolean(state.data.settings && state.data.settings.dailySummaryEnabled);
+        runAction(
+          { action: 'save_settings', dailySummaryEnabled: !current },
+          'Saqlanmoqda...'
+        );
+      });
+    }
+
+    const dsumForm = document.getElementById('dailySummaryForm');
+    if (dsumForm) {
+      dsumForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const dailySummaryTime = document.getElementById('dailySummaryTimeInput').value.trim();
+        if (!dailySummaryTime) return;
+        haptic('medium');
+        runAction(
+          { action: 'save_settings', dailySummaryTime, dailySummaryEnabled: true },
+          'Saqlanmoqda...',
+          'Kunlik yakun vaqti saqlandi'
+        );
+      });
+    }
 
     document.getElementById('limitsForm').addEventListener('submit', (e) => {
       e.preventDefault();

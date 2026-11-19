@@ -81,6 +81,22 @@ export function formatUztDateTime(tsVal) {
   return `${day}-${month} ${hh}:${mm}`;
 }
 
+export function getUztDateKey(tsVal) {
+  const ms = toMs(tsVal);
+  if (!ms) return '';
+  const d = new Date(ms + UZT_OFFSET_MS);
+  return formatYmdFromUtcDate(d);
+}
+
+export function getUztTimeHHMM(tsVal) {
+  const ms = toMs(tsVal);
+  if (!ms) return '';
+  const d = new Date(ms + UZT_OFFSET_MS);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 export function formatWeekRangeLabel(weekStart, weekEnd) {
   return `${formatYmdShortUz(weekStart)} – ${formatYmdShortUz(weekEnd)}`;
 }
@@ -888,6 +904,9 @@ export function getPersonalSettings(session) {
     reminderTime: raw.reminderTime || '09:00',
     reminderEnabled: Boolean(raw.reminderEnabled),
     lastReminderDate: raw.lastReminderDate || null,
+    dailySummaryEnabled: Boolean(raw.dailySummaryEnabled),
+    dailySummaryTime: raw.dailySummaryTime || '22:00',
+    lastDailySummaryDate: raw.lastDailySummaryDate || null,
   };
 }
 
@@ -911,4 +930,137 @@ export function buildPersonalReminderPayload(tasks, completedIndices, dateLabel)
   rows.push([{ text: 'Shaxsiy kabinet', callback_data: 'ind:home' }]);
 
   return { text, reply_markup: { inline_keyboard: rows }, allDone };
+}
+
+const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+
+export function computePersonalDailySnapshots(records = []) {
+  const dayBuckets = new Map();
+
+  for (const r of records) {
+    const logDate = getUztDateKey(r.createdAt);
+    if (!logDate) continue;
+
+    if (!dayBuckets.has(logDate)) {
+      dayBuckets.set(logDate, {
+        logDate,
+        incomeUzs: 0,
+        incomeCardUzs: 0,
+        incomeCashUzs: 0,
+        spentUzs: 0,
+        spentCardUzs: 0,
+        spentCashUzs: 0,
+        recordCount: 0,
+        catMap: new Map(),
+      });
+    }
+
+    const b = dayBuckets.get(logDate);
+    b.recordCount += 1;
+
+    const cur = (r.currency || 'UZS').toUpperCase();
+    if (cur === 'UZS') {
+      const method = r.paymentMethod === 'cash' ? 'cash' : 'card';
+      const amt = Number(r.amount) || 0;
+      if (r.type === 'income') {
+        b.incomeUzs += amt;
+        if (method === 'cash') b.incomeCashUzs += amt;
+        else b.incomeCardUzs += amt;
+      } else {
+        b.spentUzs += amt;
+        if (method === 'cash') b.spentCashUzs += amt;
+        else b.spentCardUzs += amt;
+        const cat = r.category || 'Boshqa';
+        b.catMap.set(cat, (b.catMap.get(cat) || 0) + amt);
+      }
+    }
+  }
+
+  const sortedOldest = Array.from(dayBuckets.values()).sort((a, b) =>
+    a.logDate.localeCompare(b.logDate)
+  );
+
+  let runningClosingBalance = 0;
+  for (const b of sortedOldest) {
+    b.incomeUzs = round1(b.incomeUzs);
+    b.incomeCardUzs = round1(b.incomeCardUzs);
+    b.incomeCashUzs = round1(b.incomeCashUzs);
+    b.spentUzs = round1(b.spentUzs);
+    b.spentCardUzs = round1(b.spentCardUzs);
+    b.spentCashUzs = round1(b.spentCashUzs);
+    b.netUzs = round1(b.incomeUzs - b.spentUzs);
+    runningClosingBalance = round1(runningClosingBalance + b.netUzs);
+    b.closingBalanceUzs = runningClosingBalance;
+
+    const sortedCats = Array.from(b.catMap.entries()).sort((x, y) => y[1] - x[1]);
+    const categoriesObj = {};
+    for (const [k, v] of sortedCats) {
+      categoriesObj[k] = round1(v);
+    }
+    b.categories = categoriesObj;
+    b.topCategory = sortedCats.length > 0 ? sortedCats[0][0] : b.incomeUzs > 0 ? 'Kirim' : '';
+    delete b.catMap;
+  }
+
+  return sortedOldest.sort((a, b) => b.logDate.localeCompare(a.logDate));
+}
+
+export function buildPersonalDailySummaryHtml(dayLog = {}, walletTotals = {}, ps = {}, dateLabel = '') {
+  const incomeUzs = round1(dayLog.incomeUzs || 0);
+  const spentUzs = round1(dayLog.spentUzs || 0);
+  const netUzs = round1(dayLog.netUzs !== undefined ? dayLog.netUzs : incomeUzs - spentUzs);
+  const recordCount = dayLog.recordCount || 0;
+  const netSign = netUzs > 0 ? '+' : '';
+
+  let text = `<b>Kunlik yakun</b> · ${escapeHtml(dateLabel || formatUzDate())}\n\n`;
+
+  if (recordCount === 0) {
+    text += `<blockquote><i>Bugun kirim yoki chiqim yozilmadi.</i></blockquote>\n\n`;
+  } else {
+    const flowLines = [];
+    flowLines.push(
+      `Kirim — <b>+${formatMoney(incomeUzs, 'UZS')}</b>` +
+        (incomeUzs > 0
+          ? ` <i>(Karta: +${formatMoney(dayLog.incomeCardUzs || 0, 'UZS')} · Naqd: +${formatMoney(dayLog.incomeCashUzs || 0, 'UZS')})</i>`
+          : '')
+    );
+    flowLines.push(
+      `Chiqim — <b>-${formatMoney(spentUzs, 'UZS')}</b>` +
+        (spentUzs > 0
+          ? ` <i>(Karta: -${formatMoney(dayLog.spentCardUzs || 0, 'UZS')} · Naqd: -${formatMoney(dayLog.spentCashUzs || 0, 'UZS')})</i>`
+          : '')
+    );
+    flowLines.push(`Kunlik farq — <b>${netSign}${formatMoney(netUzs, 'UZS')}</b> <i>(${recordCount} ta yozuv)</i>`);
+    if (ps?.dailyLimit > 0) {
+      flowLines.push(`Kunlik limit — <b>${formatMoney(spentUzs, 'UZS')}</b> / ${formatMoney(ps.dailyLimit, 'UZS')}`);
+    }
+    text += `<b>Bugungi oqim</b>\n<blockquote>${flowLines.join('\n')}</blockquote>\n\n`;
+  }
+
+  const catObj = dayLog.categories && typeof dayLog.categories === 'object' ? dayLog.categories : {};
+  const catEntries = Object.entries(catObj).slice(0, 5);
+  if (catEntries.length > 0) {
+    const catLines = catEntries.map(
+      ([cat, amt]) => `${escapeHtml(cat)} — <b>${formatMoney(amt, 'UZS')}</b>`
+    );
+    text += `<b>Bo'limlar</b>\n<blockquote>${catLines.join('\n')}</blockquote>\n\n`;
+  }
+
+  const wUzs = round1(walletTotals.walletUzs || 0);
+  const cardUzs = round1(walletTotals.cardBalanceUzs || 0);
+  const cashUzs = round1(walletTotals.cashBalanceUzs || 0);
+  text += `<b>Joriy hamyon</b> · <b>${formatMoney(wUzs, 'UZS')}</b>\n<blockquote>Karta — <b>${formatMoney(cardUzs, 'UZS')}</b>\nNaqd — <b>${formatMoney(cashUzs, 'UZS')}</b></blockquote>`;
+
+  return {
+    text: text.trim(),
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: 'Kunlik loglar', callback_data: 'ind:dlogs' },
+          { text: 'Shaxsiy kabinet', callback_data: 'ind:home' },
+        ],
+      ],
+    },
+  };
 }

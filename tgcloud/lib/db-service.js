@@ -10,6 +10,7 @@ import {
   personalRecords,
   personalDebts,
   weeklyReports,
+  personalDailyLogs,
 } from '../schema.js';
 import {
   getUztTimeInfo,
@@ -27,6 +28,9 @@ import {
   groupExpensesByWeek,
   pickActiveTargetWeek,
   computeWeeklyReportSnapshot,
+  getUztDateKey,
+  computePersonalDailySnapshots,
+  buildPersonalDailySummaryHtml,
 } from './settlement.js';
 
 function normalizeName(str) {
@@ -734,6 +738,7 @@ export async function addPersonalRecord({
     })
     .returning()
     .run();
+  await syncPersonalDailyLogs(userId);
   return inserted;
 }
 
@@ -751,6 +756,7 @@ export async function togglePersonalRecordMethod(userId, recordId) {
     .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
     .returning()
     .run();
+  await syncPersonalDailyLogs(userId);
   return updated;
 }
 
@@ -765,14 +771,105 @@ export async function getPersonalRecords(userId, { limit = 500 } = {}) {
 }
 
 export async function deletePersonalRecord(userId, recordId) {
+  const existing = await db
+    .select()
+    .from(personalRecords)
+    .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
+    .get();
+  const pruneDate = existing ? getUztDateKey(existing.createdAt) : null;
   await db
     .delete(personalRecords)
     .where(and(eq(personalRecords.id, recordId), eq(personalRecords.userId, userId)))
     .run();
+  await syncPersonalDailyLogs(userId, { pruneDate });
 }
 
 export async function clearPersonalRecords(userId) {
   await db.delete(personalRecords).where(eq(personalRecords.userId, userId)).run();
+}
+
+export async function getPersonalDailyLogs(userId, { limit = 60 } = {}) {
+  return await db
+    .select()
+    .from(personalDailyLogs)
+    .where(eq(personalDailyLogs.userId, userId))
+    .orderBy(desc(personalDailyLogs.logDate))
+    .limit(limit)
+    .all();
+}
+
+export async function syncPersonalDailyLogs(userId, { pruneDate = null } = {}) {
+  if (!userId) return [];
+  const allRecords = await getPersonalRecords(userId, { limit: 5000 });
+  const snapshots = computePersonalDailySnapshots(allRecords);
+  const existingRows = await getPersonalDailyLogs(userId, { limit: 400 });
+  const existingByDate = new Map(existingRows.map((r) => [r.logDate, r]));
+  const activeDates = new Set(snapshots.map((s) => s.logDate));
+
+  for (const s of snapshots) {
+    const existing = existingByDate.get(s.logDate);
+    const nowDate = new Date();
+    if (existing) {
+      await db
+        .update(personalDailyLogs)
+        .set({
+          incomeUzs: s.incomeUzs,
+          incomeCardUzs: s.incomeCardUzs,
+          incomeCashUzs: s.incomeCashUzs,
+          spentUzs: s.spentUzs,
+          spentCardUzs: s.spentCardUzs,
+          spentCashUzs: s.spentCashUzs,
+          netUzs: s.netUzs,
+          closingBalanceUzs: s.closingBalanceUzs,
+          recordCount: s.recordCount,
+          topCategory: s.topCategory,
+          categories: s.categories,
+          updatedAt: nowDate,
+        })
+        .where(eq(personalDailyLogs.id, existing.id))
+        .run();
+    } else {
+      await db
+        .insert(personalDailyLogs)
+        .values({
+          userId,
+          logDate: s.logDate,
+          incomeUzs: s.incomeUzs,
+          incomeCardUzs: s.incomeCardUzs,
+          incomeCashUzs: s.incomeCashUzs,
+          spentUzs: s.spentUzs,
+          spentCardUzs: s.spentCardUzs,
+          spentCashUzs: s.spentCashUzs,
+          netUzs: s.netUzs,
+          closingBalanceUzs: s.closingBalanceUzs,
+          recordCount: s.recordCount,
+          topCategory: s.topCategory,
+          categories: s.categories,
+          updatedAt: nowDate,
+        })
+        .run();
+    }
+  }
+
+  if (pruneDate && !activeDates.has(pruneDate)) {
+    await db
+      .delete(personalDailyLogs)
+      .where(and(eq(personalDailyLogs.userId, userId), eq(personalDailyLogs.logDate, pruneDate)))
+      .run();
+  }
+
+  return await getPersonalDailyLogs(userId, { limit: 60 });
+}
+
+export async function syncAllPersonalDailyLogs() {
+  const rows = await db.select({ userId: personalRecords.userId }).from(personalRecords).all();
+  const userIds = Array.from(new Set(rows.map((r) => Number(r.userId)).filter(Boolean)));
+  const results = [];
+  for (const uid of userIds) {
+    const logs = await syncPersonalDailyLogs(uid);
+    results.push({ userId: uid, days: logs.length });
+  }
+  return results;
 }
 
 export async function addPersonalDebt({ userId, direction, personName, amount, currency = 'UZS', note = '' }) {
@@ -922,6 +1019,75 @@ export async function checkPersonalReminders(api) {
       sentCount++;
     } catch (err) {
       console.warn(`Could not send personal reminder to ${s.userId}:`, err?.message || err);
+    }
+  }
+  return sentCount;
+}
+
+export async function checkPersonalDailySummaries(api) {
+  if (!api) return 0;
+  const sessions = await db.select().from(adminSessions).all();
+  if (!sessions || sessions.length === 0) return 0;
+
+  const { dateStr, timeStr, nowUzt } = getUztTimeInfo();
+  const dateLabel = formatUzDate(nowUzt);
+  let sentCount = 0;
+
+  for (const s of sessions) {
+    try {
+      const ps = getPersonalSettings(s);
+      if (!ps.dailySummaryEnabled) continue;
+      if (ps.lastDailySummaryDate === dateStr) continue;
+      if (timeStr < (ps.dailySummaryTime || '22:00')) continue;
+
+      const logs = await syncPersonalDailyLogs(s.userId);
+      const allRecords = await getPersonalRecords(s.userId, { limit: 5000 });
+      let walletUzs = 0;
+      let cardBalanceUzs = 0;
+      let cashBalanceUzs = 0;
+      for (const r of allRecords) {
+        if ((r.currency || 'UZS').toUpperCase() === 'UZS') {
+          const m = r.paymentMethod === 'cash' ? 'cash' : 'card';
+          if (r.type === 'income') {
+            walletUzs += r.amount;
+            if (m === 'cash') cashBalanceUzs += r.amount;
+            else cardBalanceUzs += r.amount;
+          } else {
+            walletUzs -= r.amount;
+            if (m === 'cash') cashBalanceUzs -= r.amount;
+            else cardBalanceUzs -= r.amount;
+          }
+        }
+      }
+      const walletTotals = { walletUzs, cardBalanceUzs, cashBalanceUzs };
+
+      const todayLog =
+        logs.find((l) => l.logDate === dateStr) || {
+          logDate: dateStr,
+          incomeUzs: 0,
+          incomeCardUzs: 0,
+          incomeCashUzs: 0,
+          spentUzs: 0,
+          spentCardUzs: 0,
+          spentCashUzs: 0,
+          netUzs: 0,
+          closingBalanceUzs: walletTotals.walletUzs,
+          recordCount: 0,
+          topCategory: '',
+          categories: {},
+        };
+
+      const payload = buildPersonalDailySummaryHtml(todayLog, walletTotals, ps, dateLabel);
+      await api.sendMessage({
+        chat_id: s.userId,
+        text: payload.text,
+        parse_mode: payload.parse_mode,
+        reply_markup: payload.reply_markup,
+      });
+      await updatePersonalSettings(s.userId, { lastDailySummaryDate: dateStr });
+      sentCount++;
+    } catch (err) {
+      console.warn(`Could not send daily summary to ${s.userId}:`, err?.message || err);
     }
   }
   return sentCount;

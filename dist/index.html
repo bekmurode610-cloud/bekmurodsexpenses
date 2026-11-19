@@ -51,6 +51,21 @@
             </div>
           </div>
 
+          <div class="today-strip" aria-label="Bugungi holat">
+            <div class="today-cell">
+              <div class="field-label">Bugun kirim</div>
+              <div class="today-value" id="todayIncome">+0 ming</div>
+            </div>
+            <div class="today-cell">
+              <div class="field-label">Bugun chiqim</div>
+              <div class="today-value" id="todaySpent">0 ming</div>
+            </div>
+            <div class="today-cell">
+              <div class="field-label">Bugun farq</div>
+              <div class="today-value" id="todayNet">0 ming</div>
+            </div>
+          </div>
+
           <div class="ledger-footer" id="apartmentRow" hidden>
             <span class="field-label">Kvartira balansi</span>
             <span class="footer-value" id="apartmentBalance">0 ming</span>
@@ -102,11 +117,15 @@
         </section>
 
         <section class="surface list-block">
-          <div class="block-header">
-            <h2 class="section-heading">So'nggi yozuvlar</h2>
-            <span class="summary-meta" id="recordsCount">0 ta</span>
+          <div class="block-header block-header-center">
+            <h2 class="section-heading" id="ledgerHeading">Kunlik loglar</h2>
+            <div class="segmented-pair segmented-compact" role="group" aria-label="Ko'rinish">
+              <button type="button" class="pair-btn is-active" data-ledger-view="daily">Kunlik</button>
+              <button type="button" class="pair-btn" data-ledger-view="records">Yozuvlar</button>
+            </div>
           </div>
-          <div class="ledger-rows" id="recordsList"></div>
+          <div class="daily-logs-list" id="dailyLogsList"></div>
+          <div class="ledger-rows" id="recordsList" hidden></div>
         </section>
       </section>
 
@@ -226,6 +245,21 @@
             </label>
           </div>
           <button type="submit" class="primary-btn">Limitlarni saqlash</button>
+        </form>
+
+        <form class="surface composer" id="dailySummaryForm" autocomplete="off">
+          <div class="block-header block-header-center">
+            <h2 class="section-heading">Kunlik yakun hisoboti</h2>
+            <button type="button" class="switch-btn" id="dailySummaryToggleBtn" aria-pressed="false">O'chirilgan</button>
+          </div>
+          <p class="helper-note">Har kuni kechqurun bugungi kirim, chiqim va qoldiq bo'yicha qisqa xulosa yuboriladi.</p>
+          <div class="inline-form">
+            <label class="input-group">
+              <span class="field-label">Vaqt (UZT, HH:MM)</span>
+              <input type="text" id="dailySummaryTimeInput" placeholder="22:00" maxlength="5" />
+            </label>
+            <button type="submit" class="secondary-btn">Saqlash</button>
+          </div>
         </form>
       </section>
     </main>

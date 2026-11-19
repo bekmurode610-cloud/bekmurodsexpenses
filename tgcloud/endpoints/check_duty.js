@@ -6,13 +6,20 @@ import {
   cleanupPendingDeletions,
   cleanupTrialGroup,
   checkPersonalReminders,
+  checkPersonalDailySummaries,
   syncGroupWeeklyReports,
+  syncAllPersonalDailyLogs,
 } from '../lib/db-service.js';
 
 export default async function (input, ctx) {
   if (input?.cleanupTrial) {
     const res = await cleanupTrialGroup();
     return { ok: true, cleanup: res };
+  }
+
+  if (input?.backfillPersonalLogs) {
+    const synced = await syncAllPersonalDailyLogs();
+    return { ok: true, personalLogsSynced: synced };
   }
 
   if (input?.backfillWeeks || input?.inspectWeeks) {
@@ -52,5 +59,13 @@ export default async function (input, ctx) {
     }
   }
   const personalReminded = await checkPersonalReminders(api);
-  return { ok: true, deleted, announcedCount: announced.length, announced, personalReminded };
+  const personalSummariesSent = await checkPersonalDailySummaries(api);
+  return {
+    ok: true,
+    deleted,
+    announcedCount: announced.length,
+    announced,
+    personalReminded,
+    personalSummariesSent,
+  };
 }

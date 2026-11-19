@@ -113,3 +113,23 @@ export const weeklyReports = table('weekly_reports', {
 }, (t) => ({
   weeklyGroupWeekIdx: index('idx_weekly_reports_group_week').on(t.groupId, t.weekStart),
 }));
+
+export const personalDailyLogs = table('personal_daily_logs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),
+  logDate: text('log_date').notNull(), // YYYY-MM-DD (UZT)
+  incomeUzs: real('income_uzs').default(0),
+  incomeCardUzs: real('income_card_uzs').default(0),
+  incomeCashUzs: real('income_cash_uzs').default(0),
+  spentUzs: real('spent_uzs').default(0),
+  spentCardUzs: real('spent_card_uzs').default(0),
+  spentCashUzs: real('spent_cash_uzs').default(0),
+  netUzs: real('net_uzs').default(0),
+  closingBalanceUzs: real('closing_balance_uzs').default(0),
+  recordCount: integer('record_count').default(0),
+  topCategory: text('top_category'),
+  categories: json('categories'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+}, (t) => ({
+  personalDailyUserDateIdx: index('idx_personal_daily_user_date').on(t.userId, t.logDate),
+}));
